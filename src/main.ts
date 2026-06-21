@@ -101,6 +101,12 @@ interface AcquiredSource {
 
 type PushResult = { ok: true } | { ok: false; error: string };
 
+interface BulkUpdateSummary {
+  failed: string[];
+  skipped: string[];
+  updated: string[];
+}
+
 const commandSpecs = {
   add: {
     description: "Install an agentic from the library, or import a URL/local path.",
@@ -304,24 +310,17 @@ async function updateCommand(args: ParsedArgs): Promise<number> {
     return 0;
   }
 
-  const updated: string[] = [];
-  for (const candidate of Object.keys(catalog.agentics)) {
-    if (catalog.agentics[candidate].upstream === undefined) {
-      continue;
-    }
+  const summary = await updateAllPackages(libraryDir, catalog, args.force);
 
-    await updatePackage(libraryDir, catalog, candidate, args.force);
-    updated.push(candidate);
-  }
-
-  if (updated.length > 0) {
+  if (summary.failed.length === 0 && summary.updated.length > 0) {
     await writeCatalog(libraryDir, catalog);
     if (!(await pushLibraryChanges(libraryDir, "update agentics"))) {
+      printBulkUpdateSummary(summary);
       return 1;
     }
 
     await Promise.all(
-      updated.map((updatedName) =>
+      summary.updated.map((updatedName) =>
         reinstallInScopeIfPresent(
           libraryDir,
           catalog,
@@ -333,8 +332,8 @@ async function updateCommand(args: ParsedArgs): Promise<number> {
     );
   }
 
-  console.log(`Updated ${updated.length} agentics`);
-  return 0;
+  printBulkUpdateSummary(summary);
+  return summary.failed.length > 0 ? 1 : 0;
 }
 
 async function installOne(
@@ -742,6 +741,50 @@ async function updatePackage(
   await rm(destination, { force: true, recursive: true });
   await mkdir(dirname(destination), { recursive: true });
   await cp(acquired.packagePath, destination, { recursive: true });
+}
+
+async function updateAllPackages(
+  libraryDir: string,
+  catalog: Catalog,
+  force: boolean,
+): Promise<BulkUpdateSummary> {
+  const summary: BulkUpdateSummary = { failed: [], skipped: [], updated: [] };
+
+  for (const name of Object.keys(catalog.agentics)) {
+    const entry = catalog.agentics[name];
+    if (entry.upstream === undefined) {
+      summary.skipped.push(name);
+      continue;
+    }
+
+    try {
+      await updatePackage(libraryDir, catalog, name, force);
+      summary.updated.push(name);
+    } catch (error) {
+      summary.failed.push(`${name} (${errorMessage(error)})`);
+      console.error(`Failed to update ${name}:\n${fullErrorMessage(error)}`);
+    }
+  }
+
+  return summary;
+}
+
+function printBulkUpdateSummary(summary: BulkUpdateSummary): void {
+  console.log(`Updated: ${formatSummaryNames(summary.updated)}`);
+  console.log(`Skipped: ${formatSummaryNames(summary.skipped)}`);
+  console.log(`Failed: ${formatSummaryNames(summary.failed)}`);
+}
+
+function formatSummaryNames(names: string[]): string {
+  return names.length === 0 ? "none" : names.join(", ");
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message.split("\n")[0] : String(error);
+}
+
+function fullErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function reinstallInScopeIfPresent(

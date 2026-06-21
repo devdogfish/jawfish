@@ -77,6 +77,10 @@ interface UpstreamFocusLibrary {
   upstreamDir: string;
 }
 
+interface BulkUpdateLibrary extends UpstreamFocusLibrary {
+  upstreamPlanDir: string;
+}
+
 async function setupUpstreamFocusLibrary(
   context: CliTestContext,
   options: {
@@ -128,6 +132,59 @@ async function setupUpstreamFocusLibrary(
   await writeFile(join(upstreamDir, "SKILL.md"), "# New\n");
 
   return { libraryDir, remoteDir, upstreamDir };
+}
+
+async function setupBulkUpdateLibrary(
+  context: CliTestContext,
+  options: {
+    includeSkipped?: boolean;
+    pushRemote?: boolean;
+  } = {},
+): Promise<BulkUpdateLibrary> {
+  const { libraryDir, remoteDir, upstreamDir } = await setupUpstreamFocusLibrary(
+    context,
+    { pushRemote: options.pushRemote },
+  );
+  const upstreamPlanDir = join(context.rootDir, "upstream-plan");
+  const catalog: Record<string, unknown> = {
+    focus: {
+      description: "Focus workflow",
+      path: "skills/focus",
+      type: "skill",
+      upstream: upstreamDir,
+    },
+    plan: {
+      description: "Plan prompt",
+      path: "prompts/plan",
+      type: "prompt",
+      upstream: upstreamPlanDir,
+    },
+  };
+
+  if (options.includeSkipped) {
+    catalog.scratch = {
+      description: "Scratch prompt",
+      path: "prompts/scratch",
+      type: "prompt",
+    };
+  }
+
+  await mkdir(join(libraryDir, "prompts", "plan"), { recursive: true });
+  await writeFile(join(libraryDir, "prompts", "plan", "plan.md"), "Old plan\n");
+  if (options.includeSkipped) {
+    await mkdir(join(libraryDir, "prompts", "scratch"), { recursive: true });
+    await writeFile(join(libraryDir, "prompts", "scratch", "scratch.md"), "Draft\n");
+  }
+  await mkdir(upstreamPlanDir, { recursive: true });
+  await writeFile(join(upstreamPlanDir, "plan.md"), "New plan\n");
+  await writeFile(join(libraryDir, "index.json"), JSON.stringify(catalog, null, 2));
+  await git(libraryDir, ["add", "."]);
+  await git(libraryDir, ["commit", "-m", "add bulk fixtures"]);
+  if (options.pushRemote ?? true) {
+    await git(libraryDir, ["push"]);
+  }
+
+  return { libraryDir, remoteDir, upstreamDir, upstreamPlanDir };
 }
 
 function installedFocusSkillPath(
@@ -819,6 +876,142 @@ describe("agentics CLI", () => {
       ),
       "# Old\n",
     );
+  });
+
+  test("bulk update reports updated and skipped packages", async () => {
+    const context = await setup();
+    const { libraryDir } = await setupBulkUpdateLibrary(context, {
+      includeSkipped: true,
+    });
+    await writeAgenticsConfig(context, libraryDir);
+
+    const result = await runAgentics(context, ["update"]);
+
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.match(result.stdout, /Updated: focus, plan/);
+    assert.match(result.stdout, /Skipped: scratch/);
+    assert.match(result.stdout, /Failed: none/);
+    assert.equal(
+      await readFile(join(libraryDir, "skills", "focus", "SKILL.md"), "utf8"),
+      "# New\n",
+    );
+    assert.equal(
+      await readFile(join(libraryDir, "prompts", "plan", "plan.md"), "utf8"),
+      "New plan\n",
+    );
+  });
+
+  test("bulk update commits and pushes all upstream packages", async () => {
+    const context = await setup();
+    const { libraryDir, remoteDir } = await setupBulkUpdateLibrary(context);
+    await writeAgenticsConfig(context, libraryDir);
+
+    const result = await runAgentics(context, ["update"]);
+
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.match(result.stdout, /Updated: focus, plan/);
+    assert.match(result.stdout, /Skipped: none/);
+    const localHead = await git(libraryDir, ["rev-parse", "HEAD"]);
+    const remoteHead = await git(remoteDir, ["rev-parse", "HEAD"]);
+    const commitMessage = await git(libraryDir, ["log", "-1", "--pretty=%s"]);
+    assert.equal(localHead.stdout, remoteHead.stdout);
+    assert.equal(commitMessage.stdout.trim(), "update agentics");
+  });
+
+  test("bulk update reports dirty packages as failed without committing", async () => {
+    const context = await setup();
+    const { libraryDir } = await setupBulkUpdateLibrary(context);
+    const initialHead = await git(libraryDir, ["rev-parse", "HEAD"]);
+    await writeFile(join(libraryDir, "skills", "focus", "SKILL.md"), "# Dirty\n");
+    await writeAgenticsConfig(context, libraryDir);
+
+    const result = await runAgentics(context, ["update"]);
+
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stdout, /Updated: plan/);
+    assert.match(result.stdout, /Failed: focus \(Package has dirty local changes: focus\)/);
+    assert.match(result.stderr, /skills\/focus\/SKILL\.md/);
+    assert.match(result.stderr, /agentics update --force focus/);
+    assert.equal(
+      await readFile(join(libraryDir, "skills", "focus", "SKILL.md"), "utf8"),
+      "# Dirty\n",
+    );
+    const finalHead = await git(libraryDir, ["rev-parse", "HEAD"]);
+    assert.equal(finalHead.stdout, initialHead.stdout);
+  });
+
+  test("force bulk update replaces dirty packages", async () => {
+    const context = await setup();
+    const { libraryDir } = await setupBulkUpdateLibrary(context);
+    await writeFile(join(libraryDir, "skills", "focus", "SKILL.md"), "# Dirty\n");
+    await writeAgenticsConfig(context, libraryDir);
+
+    const result = await runAgentics(context, ["update", "-F"]);
+
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.match(result.stdout, /Updated: focus, plan/);
+    assert.match(result.stdout, /Failed: none/);
+    assert.equal(
+      await readFile(join(libraryDir, "skills", "focus", "SKILL.md"), "utf8"),
+      "# New\n",
+    );
+  });
+
+  test("bulk update reinstalls updated packages only in the selected scope", async () => {
+    const context = await setup();
+    const { libraryDir } = await setupBulkUpdateLibrary(context);
+    const codexHome = join(context.rootDir, "codex-home");
+    const env = { CODEX_HOME: codexHome };
+
+    await writeAgenticsConfig(context, libraryDir);
+    await writeFile(
+      join(context.projectDir, "agentics.json"),
+      JSON.stringify({ agentics: { focus: { tool: "codex" } } }, null, 2),
+    );
+    await writeFile(
+      join(context.homeDir, "agentics.json"),
+      JSON.stringify({ agentics: { focus: { tool: "codex" } } }, null, 2),
+    );
+    assert.equal((await runAgentics(context, ["install"], { env })).exitCode, 0);
+    assert.equal((await runAgentics(context, ["install", "-g"], { env })).exitCode, 0);
+
+    const result = await runAgentics(context, ["update", "-g"], { env });
+
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.equal(
+      await readFile(join(codexHome, "skills", "focus", "SKILL.md"), "utf8"),
+      "# New\n",
+    );
+    assert.equal(
+      await readFile(
+        join(context.projectDir, ".codex", "skills", "focus", "SKILL.md"),
+        "utf8",
+      ),
+      "# Old\n",
+    );
+  });
+
+  test("bulk push failure leaves the commit intact with recovery guidance", async () => {
+    const context = await setup();
+    const { libraryDir, remoteDir } = await setupBulkUpdateLibrary(context);
+    await writeFile(
+      join(remoteDir, "hooks", "pre-receive"),
+      "#!/bin/sh\necho rejected by test >&2\nexit 1\n",
+    );
+    await chmod(join(remoteDir, "hooks", "pre-receive"), 0o755);
+    await writeAgenticsConfig(context, libraryDir);
+
+    const result = await runAgentics(context, ["update"]);
+
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stdout, /Updated: focus, plan/);
+    assert.match(result.stderr, /Library commit was created, but push failed/);
+    assert.match(result.stderr, /git -C .*content-library.* push/);
+    const localHead = await git(libraryDir, ["rev-parse", "HEAD"]);
+    const remoteHead = await git(remoteDir, ["rev-parse", "HEAD"]);
+    const commitMessage = await git(libraryDir, ["log", "-1", "--pretty=%s"]);
+    assert.notEqual(localHead.stdout, remoteHead.stdout);
+    assert.equal(commitMessage.stdout.trim(), "update agentics");
   });
 
   test("prints root help and command help for the initial surface", async () => {
