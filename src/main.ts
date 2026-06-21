@@ -25,8 +25,10 @@ import {
   assertSupportedTool,
   destinationPath,
   supportedTools,
+  typeFolder,
   type AgenticType,
   type InstallScope,
+  type ToolPaths,
 } from "./tool-adapters.ts";
 
 const version = "0.1.0";
@@ -680,17 +682,6 @@ async function writeManifest(scope: InstallScope, manifest: Manifest): Promise<v
   await writeJson(manifestPath(scope), manifest);
 }
 
-function typeFolder(type: AgenticType): string {
-  switch (type) {
-    case "agent":
-      return "agents";
-    case "prompt":
-      return "prompts";
-    case "skill":
-      return "skills";
-  }
-}
-
 async function inferType(
   packagePath: string,
   entryFile: string | undefined,
@@ -756,7 +747,7 @@ function codexHome(): string {
   return process.env.CODEX_HOME ?? join(homeDir(), ".codex");
 }
 
-function toolPaths() {
+function toolPaths(): ToolPaths {
   return {
     codexHome: codexHome(),
     homeDir: homeDir(),

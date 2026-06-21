@@ -2,6 +2,7 @@ import { join } from "node:path";
 
 export const supportedTools = ["codex", "claude-code", "hermes"] as const;
 
+export type SupportedTool = (typeof supportedTools)[number];
 export type AgenticType = "skill" | "agent" | "prompt";
 export type InstallScope = "project" | "global";
 
@@ -33,14 +34,18 @@ const adapters = {
     destinationPath: (name, type, scope, paths) =>
       join(scopeRoot(scope, paths), ".hermes", typeFolder(type), name),
   },
-} satisfies Record<string, ToolAdapter>;
+} satisfies Record<SupportedTool, ToolAdapter>;
 
-export function assertSupportedTool(tool: string): void {
-  if (!Object.hasOwn(adapters, tool)) {
+export function assertSupportedTool(tool: string): asserts tool is SupportedTool {
+  if (!isSupportedTool(tool)) {
     throw new Error(
       `Unsupported tool: ${tool}. Supported tools: ${supportedTools.join(", ")}`,
     );
   }
+}
+
+function isSupportedTool(tool: string): tool is SupportedTool {
+  return Object.hasOwn(adapters, tool);
 }
 
 export function destinationPath(
@@ -51,12 +56,7 @@ export function destinationPath(
   paths: ToolPaths,
 ): string {
   assertSupportedTool(tool);
-  return adapters[tool as keyof typeof adapters].destinationPath(
-    name,
-    type,
-    scope,
-    paths,
-  );
+  return adapters[tool].destinationPath(name, type, scope, paths);
 }
 
 export function typeFolder(type: AgenticType): string {

@@ -70,6 +70,37 @@ async function writeIndexedFocusSkill(libraryDir: string): Promise<void> {
   );
 }
 
+function installedFocusSkillPath(
+  context: CliTestContext,
+  tool: string,
+  scope: "project" | "global",
+  codexHome: string,
+): string {
+  return join(toolRoot(context, tool, scope, codexHome), "skills", "focus", "SKILL.md");
+}
+
+function toolRoot(
+  context: CliTestContext,
+  tool: string,
+  scope: "project" | "global",
+  codexHome: string,
+): string {
+  switch (tool) {
+    case "codex":
+      return scope === "project" ? join(context.projectDir, ".codex") : codexHome;
+    case "claude-code":
+      return join(scopeRoot(context, scope), ".claude");
+    case "hermes":
+      return join(scopeRoot(context, scope), ".hermes");
+    default:
+      throw new Error(`Unsupported test tool: ${tool}`);
+  }
+}
+
+function scopeRoot(context: CliTestContext, scope: "project" | "global"): string {
+  return scope === "project" ? context.projectDir : context.homeDir;
+}
+
 afterEach(async () => {
   await Promise.all(contexts.splice(0).map((context) => context.cleanup()));
 });
@@ -127,21 +158,24 @@ describe("agentics CLI", () => {
   });
 
   test("adds a name-keyed catalog skill to project and global directories for each tool", async () => {
-    for (const tool of ["codex", "claude-code", "hermes"]) {
+    for (const tool of ["codex", "claude-code", "hermes"] as const) {
       const context = await setup();
       const libraryDir = join(context.rootDir, "content-library");
       const codexHome = join(context.rootDir, "codex-home");
       const env: Record<string, string> =
         tool === "codex" ? { CODEX_HOME: codexHome } : {};
-      const toolDir = tool === "claude-code" ? ".claude" : `.${tool}`;
-      const projectSkill =
-        tool === "codex"
-          ? join(context.projectDir, ".codex", "skills", "focus", "SKILL.md")
-          : join(context.projectDir, toolDir, "skills", "focus", "SKILL.md");
-      const globalSkill =
-        tool === "codex"
-          ? join(codexHome, "skills", "focus", "SKILL.md")
-          : join(context.homeDir, toolDir, "skills", "focus", "SKILL.md");
+      const projectSkill = installedFocusSkillPath(
+        context,
+        tool,
+        "project",
+        codexHome,
+      );
+      const globalSkill = installedFocusSkillPath(
+        context,
+        tool,
+        "global",
+        codexHome,
+      );
 
       await createGitRepository(libraryDir);
       await writeIndexedFocusSkill(libraryDir);
