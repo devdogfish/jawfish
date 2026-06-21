@@ -670,15 +670,17 @@ function destinationPath(
   scope: InstallScope,
   tool: string,
 ): string {
-  const folder = typeFolder(type);
+  return join(toolRoot(tool, scope), typeFolder(type), name);
+}
 
+function toolRoot(tool: string, scope: InstallScope): string {
   switch (tool) {
     case "codex":
-      return join(codexRoot(scope), folder, name);
+      return codexRoot(scope);
     case "claude-code":
-      return join(scopeRoot(scope), ".claude", folder, name);
+      return join(scopeRoot(scope), ".claude");
     case "hermes":
-      return join(scopeRoot(scope), ".hermes", folder, name);
+      return join(scopeRoot(scope), ".hermes");
     default:
       throw new Error(`Unsupported tool: ${tool}`);
   }

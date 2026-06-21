@@ -46,6 +46,28 @@ async function writeAgenticsConfig(
   );
 }
 
+async function writeIndexedFocusSkill(libraryDir: string): Promise<void> {
+  await mkdir(join(libraryDir, "skills", "focus"), { recursive: true });
+  await writeFile(
+    join(libraryDir, "index.json"),
+    JSON.stringify(
+      {
+        focus: {
+          description: "Focus workflow",
+          path: "skills/focus",
+          type: "skill",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  await writeFile(
+    join(libraryDir, "skills", "focus", "SKILL.md"),
+    "# Focus\n\nUse focused execution.\n",
+  );
+}
+
 afterEach(async () => {
   await Promise.all(contexts.splice(0).map((context) => context.cleanup()));
 });
@@ -102,31 +124,13 @@ describe("agentics CLI", () => {
     );
   });
 
-  test("adds an existing catalog skill to Codex project and global directories", async () => {
+  test("adds a name-keyed catalog skill to Codex project and global directories", async () => {
     const context = await setup();
     const libraryDir = join(context.rootDir, "content-library");
     const codexHome = join(context.rootDir, "codex-home");
 
     await createGitRepository(libraryDir);
-    await mkdir(join(libraryDir, "skills", "focus"), { recursive: true });
-    await writeFile(
-      join(libraryDir, "index.json"),
-      JSON.stringify(
-        {
-          focus: {
-            description: "Focus workflow",
-            path: "skills/focus",
-            type: "skill",
-          },
-        },
-        null,
-        2,
-      ),
-    );
-    await writeFile(
-      join(libraryDir, "skills", "focus", "SKILL.md"),
-      "# Focus\n\nUse focused execution.\n",
-    );
+    await writeIndexedFocusSkill(libraryDir);
     await writeAgenticsConfig(context, libraryDir);
 
     const projectResult = await runAgentics(context, ["add", "focus"], {
