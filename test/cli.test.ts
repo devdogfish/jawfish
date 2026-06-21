@@ -71,6 +71,65 @@ async function writeIndexedFocusSkill(libraryDir: string): Promise<void> {
   );
 }
 
+interface UpstreamFocusLibrary {
+  libraryDir: string;
+  remoteDir: string;
+  upstreamDir: string;
+}
+
+async function setupUpstreamFocusLibrary(
+  context: CliTestContext,
+  options: {
+    catalogFile?: "catalog.json" | "index.json";
+    pushRemote?: boolean;
+    staleFile?: boolean;
+    upstream?: string;
+  } = {},
+): Promise<UpstreamFocusLibrary> {
+  const libraryDir = join(context.rootDir, "content-library");
+  const remoteDir = join(context.rootDir, "content-library.git");
+  const upstreamDir = join(context.rootDir, "upstream-focus");
+  const catalogFile = options.catalogFile ?? "index.json";
+  const shouldPushRemote = options.pushRemote ?? true;
+  const focusEntry = {
+    description: "Focus workflow",
+    path: "skills/focus",
+    type: "skill",
+    upstream: options.upstream ?? upstreamDir,
+  };
+  const catalog =
+    catalogFile === "catalog.json"
+      ? { agentics: { focus: focusEntry } }
+      : { focus: focusEntry };
+
+  await createGitRepository(libraryDir);
+  if (shouldPushRemote) {
+    await createBareRemote(remoteDir);
+    await git(libraryDir, ["remote", "add", "origin", remoteDir]);
+  }
+
+  await mkdir(join(libraryDir, "skills", "focus"), { recursive: true });
+  await writeFile(
+    join(libraryDir, catalogFile),
+    JSON.stringify(catalog, null, 2),
+  );
+  await writeFile(join(libraryDir, "skills", "focus", "SKILL.md"), "# Old\n");
+  if (options.staleFile) {
+    await writeFile(join(libraryDir, "skills", "focus", "stale.md"), "stale\n");
+  }
+
+  await git(libraryDir, ["add", "."]);
+  await git(libraryDir, ["commit", "-m", "seed focus"]);
+  if (shouldPushRemote) {
+    await git(libraryDir, ["push", "-u", "origin", "HEAD"]);
+  }
+
+  await mkdir(upstreamDir, { recursive: true });
+  await writeFile(join(upstreamDir, "SKILL.md"), "# New\n");
+
+  return { libraryDir, remoteDir, upstreamDir };
+}
+
 function installedFocusSkillPath(
   context: CliTestContext,
   tool: string,
@@ -581,38 +640,10 @@ describe("agentics CLI", () => {
 
   test("updates an upstream package, removes stale files, pushes, and reinstalls", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
-    const remoteDir = join(context.rootDir, "content-library.git");
-    const upstreamDir = join(context.rootDir, "upstream-focus");
-
-    await createGitRepository(libraryDir);
-    await createBareRemote(remoteDir);
-    await git(libraryDir, ["remote", "add", "origin", remoteDir]);
-    await mkdir(join(libraryDir, "skills", "focus"), { recursive: true });
-    await writeFile(
-      join(libraryDir, "catalog.json"),
-      JSON.stringify(
-        {
-          agentics: {
-            focus: {
-              description: "Focus workflow",
-              path: "skills/focus",
-              type: "skill",
-              upstream: upstreamDir,
-            },
-          },
-        },
-        null,
-        2,
-      ),
-    );
-    await writeFile(join(libraryDir, "skills", "focus", "SKILL.md"), "# Old\n");
-    await writeFile(join(libraryDir, "skills", "focus", "stale.md"), "stale\n");
-    await git(libraryDir, ["add", "."]);
-    await git(libraryDir, ["commit", "-m", "seed focus"]);
-    await git(libraryDir, ["push", "-u", "origin", "HEAD"]);
-    await mkdir(upstreamDir, { recursive: true });
-    await writeFile(join(upstreamDir, "SKILL.md"), "# New\n");
+    const { libraryDir, remoteDir } = await setupUpstreamFocusLibrary(context, {
+      catalogFile: "catalog.json",
+      staleFile: true,
+    });
     await writeAgenticsConfig(context, libraryDir);
     await writeFile(
       join(context.projectDir, "agentics.json"),
@@ -655,36 +686,11 @@ describe("agentics CLI", () => {
 
   test("updates from a file upstream by replacing with the parent directory", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
-    const remoteDir = join(context.rootDir, "content-library.git");
     const upstreamDir = join(context.rootDir, "upstream-focus");
-
-    await createGitRepository(libraryDir);
-    await createBareRemote(remoteDir);
-    await git(libraryDir, ["remote", "add", "origin", remoteDir]);
-    await mkdir(join(libraryDir, "skills", "focus"), { recursive: true });
-    await writeFile(
-      join(libraryDir, "index.json"),
-      JSON.stringify(
-        {
-          focus: {
-            description: "Focus workflow",
-            path: "skills/focus",
-            type: "skill",
-            upstream: join(upstreamDir, "SKILL.md"),
-          },
-        },
-        null,
-        2,
-      ),
-    );
-    await writeFile(join(libraryDir, "skills", "focus", "SKILL.md"), "# Old\n");
-    await writeFile(join(libraryDir, "skills", "focus", "stale.md"), "stale\n");
-    await git(libraryDir, ["add", "."]);
-    await git(libraryDir, ["commit", "-m", "seed focus"]);
-    await git(libraryDir, ["push", "-u", "origin", "HEAD"]);
-    await mkdir(upstreamDir, { recursive: true });
-    await writeFile(join(upstreamDir, "SKILL.md"), "# New\n");
+    const { libraryDir } = await setupUpstreamFocusLibrary(context, {
+      staleFile: true,
+      upstream: join(upstreamDir, "SKILL.md"),
+    });
     await writeFile(join(upstreamDir, "references.md"), "Use deep work blocks.\n");
     await writeAgenticsConfig(context, libraryDir);
 
@@ -703,32 +709,10 @@ describe("agentics CLI", () => {
 
   test("aborts update when the local package has dirty changes", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
-    const upstreamDir = join(context.rootDir, "upstream-focus");
-
-    await createGitRepository(libraryDir);
-    await mkdir(join(libraryDir, "skills", "focus"), { recursive: true });
-    await writeFile(
-      join(libraryDir, "index.json"),
-      JSON.stringify(
-        {
-          focus: {
-            description: "Focus workflow",
-            path: "skills/focus",
-            type: "skill",
-            upstream: upstreamDir,
-          },
-        },
-        null,
-        2,
-      ),
-    );
-    await writeFile(join(libraryDir, "skills", "focus", "SKILL.md"), "# Old\n");
-    await git(libraryDir, ["add", "."]);
-    await git(libraryDir, ["commit", "-m", "seed focus"]);
+    const { libraryDir } = await setupUpstreamFocusLibrary(context, {
+      pushRemote: false,
+    });
     await writeFile(join(libraryDir, "skills", "focus", "SKILL.md"), "# Dirty\n");
-    await mkdir(upstreamDir, { recursive: true });
-    await writeFile(join(upstreamDir, "SKILL.md"), "# New\n");
     await writeAgenticsConfig(context, libraryDir);
 
     const result = await runAgentics(context, ["update", "focus"]);
@@ -745,36 +729,8 @@ describe("agentics CLI", () => {
 
   test("force flags update a package with dirty local changes", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
-    const remoteDir = join(context.rootDir, "content-library.git");
-    const upstreamDir = join(context.rootDir, "upstream-focus");
-
-    await createGitRepository(libraryDir);
-    await createBareRemote(remoteDir);
-    await git(libraryDir, ["remote", "add", "origin", remoteDir]);
-    await mkdir(join(libraryDir, "skills", "focus"), { recursive: true });
-    await writeFile(
-      join(libraryDir, "index.json"),
-      JSON.stringify(
-        {
-          focus: {
-            description: "Focus workflow",
-            path: "skills/focus",
-            type: "skill",
-            upstream: upstreamDir,
-          },
-        },
-        null,
-        2,
-      ),
-    );
-    await writeFile(join(libraryDir, "skills", "focus", "SKILL.md"), "# Old\n");
-    await git(libraryDir, ["add", "."]);
-    await git(libraryDir, ["commit", "-m", "seed focus"]);
-    await git(libraryDir, ["push", "-u", "origin", "HEAD"]);
+    const { libraryDir, upstreamDir } = await setupUpstreamFocusLibrary(context);
     await writeFile(join(libraryDir, "skills", "focus", "SKILL.md"), "# Dirty\n");
-    await mkdir(upstreamDir, { recursive: true });
-    await writeFile(join(upstreamDir, "SKILL.md"), "# New\n");
     await writeAgenticsConfig(context, libraryDir);
 
     const result = await runAgentics(context, ["update", "-F", "focus"]);
@@ -803,40 +759,12 @@ describe("agentics CLI", () => {
 
   test("push failure leaves the update commit intact with recovery guidance", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
-    const remoteDir = join(context.rootDir, "content-library.git");
-    const upstreamDir = join(context.rootDir, "upstream-focus");
-
-    await createGitRepository(libraryDir);
-    await createBareRemote(remoteDir);
-    await git(libraryDir, ["remote", "add", "origin", remoteDir]);
-    await mkdir(join(libraryDir, "skills", "focus"), { recursive: true });
-    await writeFile(
-      join(libraryDir, "index.json"),
-      JSON.stringify(
-        {
-          focus: {
-            description: "Focus workflow",
-            path: "skills/focus",
-            type: "skill",
-            upstream: upstreamDir,
-          },
-        },
-        null,
-        2,
-      ),
-    );
-    await writeFile(join(libraryDir, "skills", "focus", "SKILL.md"), "# Old\n");
-    await git(libraryDir, ["add", "."]);
-    await git(libraryDir, ["commit", "-m", "seed focus"]);
-    await git(libraryDir, ["push", "-u", "origin", "HEAD"]);
+    const { libraryDir, remoteDir } = await setupUpstreamFocusLibrary(context);
     await writeFile(
       join(remoteDir, "hooks", "pre-receive"),
       "#!/bin/sh\necho rejected by test >&2\nexit 1\n",
     );
     await chmod(join(remoteDir, "hooks", "pre-receive"), 0o755);
-    await mkdir(upstreamDir, { recursive: true });
-    await writeFile(join(upstreamDir, "SKILL.md"), "# New\n");
     await writeAgenticsConfig(context, libraryDir);
 
     const result = await runAgentics(context, ["update", "focus"]);
@@ -855,37 +783,10 @@ describe("agentics CLI", () => {
 
   test("update reinstalls only in the selected scope when already installed", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
-    const remoteDir = join(context.rootDir, "content-library.git");
-    const upstreamDir = join(context.rootDir, "upstream-focus");
+    const { libraryDir } = await setupUpstreamFocusLibrary(context);
     const codexHome = join(context.rootDir, "codex-home");
     const env = { CODEX_HOME: codexHome };
 
-    await createGitRepository(libraryDir);
-    await createBareRemote(remoteDir);
-    await git(libraryDir, ["remote", "add", "origin", remoteDir]);
-    await mkdir(join(libraryDir, "skills", "focus"), { recursive: true });
-    await writeFile(
-      join(libraryDir, "index.json"),
-      JSON.stringify(
-        {
-          focus: {
-            description: "Focus workflow",
-            path: "skills/focus",
-            type: "skill",
-            upstream: upstreamDir,
-          },
-        },
-        null,
-        2,
-      ),
-    );
-    await writeFile(join(libraryDir, "skills", "focus", "SKILL.md"), "# Old\n");
-    await git(libraryDir, ["add", "."]);
-    await git(libraryDir, ["commit", "-m", "seed focus"]);
-    await git(libraryDir, ["push", "-u", "origin", "HEAD"]);
-    await mkdir(upstreamDir, { recursive: true });
-    await writeFile(join(upstreamDir, "SKILL.md"), "# New\n");
     await writeAgenticsConfig(context, libraryDir);
     await writeFile(
       join(context.projectDir, "agentics.json"),

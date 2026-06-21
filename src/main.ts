@@ -290,7 +290,7 @@ async function updateCommand(args: ParsedArgs): Promise<number> {
   const libraryDir = await resolveContentLibrary(config);
   const catalog = await readCatalog(libraryDir);
   const name = args.positionals[0];
-  const scope = getScope(args);
+  const reinstallScope = getScope(args);
 
   if (name !== undefined) {
     await updatePackage(libraryDir, catalog, name, args.force);
@@ -299,7 +299,7 @@ async function updateCommand(args: ParsedArgs): Promise<number> {
       return 1;
     }
 
-    await reinstallInScopeIfPresent(libraryDir, catalog, name, scope, config);
+    await reinstallInScopeIfPresent(libraryDir, catalog, name, reinstallScope, config);
     console.log(`Updated ${name}`);
     return 0;
   }
@@ -322,7 +322,13 @@ async function updateCommand(args: ParsedArgs): Promise<number> {
 
     await Promise.all(
       updated.map((updatedName) =>
-        reinstallInScopeIfPresent(libraryDir, catalog, updatedName, scope, config),
+        reinstallInScopeIfPresent(
+          libraryDir,
+          catalog,
+          updatedName,
+          reinstallScope,
+          config,
+        ),
       ),
     );
   }
