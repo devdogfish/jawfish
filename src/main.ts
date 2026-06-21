@@ -123,6 +123,7 @@ const commandSpecs = {
     summary: "Update upstream-backed agentics",
     usage: "agentics update [options] [name]",
     options: [
+      "-g, --global    Reinstall global manifest if already installed",
       "-F, --force     Replace dirty package contents",
       "-h, --help      Show help",
     ],
@@ -289,6 +290,7 @@ async function updateCommand(args: ParsedArgs): Promise<number> {
   const libraryDir = await resolveContentLibrary(config);
   const catalog = await readCatalog(libraryDir);
   const name = args.positionals[0];
+  const scope = getScope(args);
 
   if (name !== undefined) {
     await updatePackage(libraryDir, catalog, name, args.force);
@@ -297,7 +299,7 @@ async function updateCommand(args: ParsedArgs): Promise<number> {
       return 1;
     }
 
-    await reinstallIfPresent(libraryDir, catalog, name);
+    await reinstallInScopeIfPresent(libraryDir, catalog, name, scope, config);
     console.log(`Updated ${name}`);
     return 0;
   }
@@ -319,7 +321,9 @@ async function updateCommand(args: ParsedArgs): Promise<number> {
     }
 
     await Promise.all(
-      updated.map((updatedName) => reinstallIfPresent(libraryDir, catalog, updatedName)),
+      updated.map((updatedName) =>
+        reinstallInScopeIfPresent(libraryDir, catalog, updatedName, scope, config),
+      ),
     );
   }
 
@@ -734,17 +738,18 @@ async function updatePackage(
   await cp(acquired.packagePath, destination, { recursive: true });
 }
 
-async function reinstallIfPresent(
+async function reinstallInScopeIfPresent(
   libraryDir: string,
   catalog: Catalog,
   name: string,
+  scope: InstallScope,
+  config: Config,
 ): Promise<void> {
-  for (const scope of ["project", "global"] as const) {
-    const manifest = await readManifest(scope);
-    const entry = manifest.agentics[name];
-    if (entry !== undefined) {
-      await materialize(libraryDir, catalog, name, scope, entry.tool);
-    }
+  const manifest = await readManifest(scope);
+  const entry = manifest.agentics[name];
+  if (entry !== undefined) {
+    assertConfiguredTool(config, entry.tool);
+    await materialize(libraryDir, catalog, name, scope, entry.tool);
   }
 }
 
@@ -1204,14 +1209,14 @@ async function pushLibraryChanges(libraryDir: string, message: string): Promise<
     return true;
   }
 
-  printPushFailure(pushResult.error);
+  printPushFailure(pushResult.error, libraryDir);
   return false;
 }
 
-function printPushFailure(error: string): void {
+function printPushFailure(error: string, libraryDir: string): void {
   console.error("Library commit was created, but push failed.");
   console.error(error.trim());
-  console.error("Recover with: git -C <contentLibrary> push");
+  console.error(`Recover with: git -C ${libraryDir} push`);
 }
 
 async function runCommand(
