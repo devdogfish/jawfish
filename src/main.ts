@@ -101,8 +101,14 @@ interface AcquiredSource {
 
 type PushResult = { ok: true } | { ok: false; error: string };
 
+interface BulkUpdateFailure {
+  details: string;
+  message: string;
+  name: string;
+}
+
 interface BulkUpdateSummary {
-  failed: string[];
+  failed: BulkUpdateFailure[];
   skipped: string[];
   updated: string[];
 }
@@ -761,8 +767,9 @@ async function updateAllPackages(
       await updatePackage(libraryDir, catalog, name, force);
       summary.updated.push(name);
     } catch (error) {
-      summary.failed.push(`${name} (${errorMessage(error)})`);
-      console.error(`Failed to update ${name}:\n${fullErrorMessage(error)}`);
+      const failure = bulkUpdateFailure(name, error);
+      summary.failed.push(failure);
+      console.error(`Failed to update ${name}:\n${failure.details}`);
     }
   }
 
@@ -772,18 +779,33 @@ async function updateAllPackages(
 function printBulkUpdateSummary(summary: BulkUpdateSummary): void {
   console.log(`Updated: ${formatSummaryNames(summary.updated)}`);
   console.log(`Skipped: ${formatSummaryNames(summary.skipped)}`);
-  console.log(`Failed: ${formatSummaryNames(summary.failed)}`);
+  console.log(`Failed: ${formatBulkUpdateFailures(summary.failed)}`);
 }
 
 function formatSummaryNames(names: string[]): string {
   return names.length === 0 ? "none" : names.join(", ");
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message.split("\n")[0] : String(error);
+function formatBulkUpdateFailures(failures: BulkUpdateFailure[]): string {
+  if (failures.length === 0) {
+    return "none";
+  }
+
+  return failures
+    .map((failure) => `${failure.name} (${failure.message})`)
+    .join(", ");
 }
 
-function fullErrorMessage(error: unknown): string {
+function bulkUpdateFailure(name: string, error: unknown): BulkUpdateFailure {
+  const details = stringifyError(error);
+  return {
+    details,
+    message: details.split("\n")[0],
+    name,
+  };
+}
+
+function stringifyError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
