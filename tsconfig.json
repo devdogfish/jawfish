@@ -5,9 +5,10 @@
     "moduleResolution": "NodeNext",
     "lib": ["ESNext"],
     "types": ["node"],
+    "allowImportingTsExtensions": true,
     "strict": true,
     "noEmit": true,
     "skipLibCheck": false
   },
-  "include": [".sandcastle/main.mts"]
+  "include": [".sandcastle/main.mts", "src/**/*.ts", "test/**/*.ts"]
 }

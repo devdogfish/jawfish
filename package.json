@@ -1,10 +1,19 @@
 {
+  "name": "agentics-cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "agentics": "./src/main.ts"
+  },
   "scripts": {
+    "agentics": "node --experimental-strip-types src/main.ts",
     "sandcastle": "npx tsx .sandcastle/main.mts",
+    "test": "node --test --experimental-strip-types test/**/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@ai-hero/sandcastle": "^0.10.0",
+    "@clack/prompts": "^1.6.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
