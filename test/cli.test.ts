@@ -1,7 +1,8 @@
 import { afterEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
+import { join, relative, resolve } from "node:path";
 import {
   createBareRemote,
   createCliTestContext,
@@ -260,15 +261,13 @@ describe("agentics CLI", () => {
       "Keep it concise.\n",
     );
     assert.deepEqual(
-      JSON.parse(await readFile(join(libraryDir, "catalog.json"), "utf8")),
+      JSON.parse(await readFile(join(libraryDir, "index.json"), "utf8")),
       {
-        agentics: {
-          "daily-brief": {
-            description: "",
-            path: "prompts/daily-brief",
-            type: "prompt",
-            upstream: join(sourceDir, "brief.md"),
-          },
+        "daily-brief": {
+          description: "",
+          path: "prompts/daily-brief",
+          type: "prompt",
+          upstream: join(sourceDir, "brief.md"),
         },
       },
     );
@@ -276,6 +275,146 @@ describe("agentics CLI", () => {
     const localHead = await git(libraryDir, ["rev-parse", "HEAD"]);
     const remoteHead = await git(remoteDir, ["rev-parse", "HEAD"]);
     assert.equal(localHead.stdout, remoteHead.stdout);
+  });
+
+  test("imports a URL file parent package, pushes the library, and installs it", async () => {
+    const context = await setup();
+    const libraryDir = join(context.rootDir, "content-library");
+    const remoteDir = join(context.rootDir, "content-library.git");
+    const sourceDir = join(context.rootDir, "upstream-focus");
+
+    await createGitRepository(libraryDir);
+    await createBareRemote(remoteDir);
+    await git(libraryDir, ["remote", "add", "origin", remoteDir]);
+    await git(libraryDir, ["push", "-u", "origin", "HEAD"]);
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(join(sourceDir, "SKILL.md"), "# Focus\n");
+    await writeFile(join(sourceDir, "references.md"), "Use deep work blocks.\n");
+    await writeAgenticsConfig(context, libraryDir);
+
+    const server = await serveStaticDirectory(context.rootDir);
+    const sourceUrl = `${server.url}/upstream-focus/SKILL.md`;
+    try {
+      const result = await runAgentics(context, ["add", sourceUrl]);
+
+      assert.equal(result.exitCode, 0, result.stderr);
+      assert.equal(
+        await readFile(
+          join(
+            context.projectDir,
+            ".codex",
+            "skills",
+            "upstream-focus",
+            "references.md",
+          ),
+          "utf8",
+        ),
+        "Use deep work blocks.\n",
+      );
+      assert.deepEqual(
+        JSON.parse(await readFile(join(libraryDir, "index.json"), "utf8")),
+        {
+          "upstream-focus": {
+            description: "",
+            path: "skills/upstream-focus",
+            type: "skill",
+            upstream: sourceUrl,
+          },
+        },
+      );
+
+      const localHead = await git(libraryDir, ["rev-parse", "HEAD"]);
+      const remoteHead = await git(remoteDir, ["rev-parse", "HEAD"]);
+      assert.equal(localHead.stdout, remoteHead.stdout);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("imports a URL directory package with agent type inference", async () => {
+    const context = await setup();
+    const libraryDir = join(context.rootDir, "content-library");
+    const remoteDir = join(context.rootDir, "content-library.git");
+    const sourceDir = join(context.rootDir, "review-agent");
+
+    await createGitRepository(libraryDir);
+    await createBareRemote(remoteDir);
+    await git(libraryDir, ["remote", "add", "origin", remoteDir]);
+    await git(libraryDir, ["push", "-u", "origin", "HEAD"]);
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(join(sourceDir, "AGENT.md"), "# Review Agent\n");
+    await writeFile(join(sourceDir, "checklist.md"), "Check tests.\n");
+    await writeAgenticsConfig(context, libraryDir);
+
+    const server = await serveStaticDirectory(context.rootDir);
+    const sourceUrl = `${server.url}/review-agent`;
+    try {
+      const result = await runAgentics(context, ["add", sourceUrl]);
+
+      assert.equal(result.exitCode, 0, result.stderr);
+      assert.equal(
+        await readFile(
+          join(context.projectDir, ".codex", "agents", "review-agent", "checklist.md"),
+          "utf8",
+        ),
+        "Check tests.\n",
+      );
+      assert.deepEqual(
+        JSON.parse(await readFile(join(libraryDir, "index.json"), "utf8")),
+        {
+          "review-agent": {
+            description: "",
+            path: "agents/review-agent",
+            type: "agent",
+            upstream: sourceUrl,
+          },
+        },
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("imports an ambiguous local package with selected type and name override", async () => {
+    const context = await setup();
+    const libraryDir = join(context.rootDir, "content-library");
+    const remoteDir = join(context.rootDir, "content-library.git");
+    const sourceDir = join(context.rootDir, "scratch-agent");
+
+    await createGitRepository(libraryDir);
+    await createBareRemote(remoteDir);
+    await git(libraryDir, ["remote", "add", "origin", remoteDir]);
+    await git(libraryDir, ["push", "-u", "origin", "HEAD"]);
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(join(sourceDir, "README.md"), "# Scratch\n");
+    await writeFile(join(sourceDir, "notes.txt"), "Act carefully.\n");
+    await writeAgenticsConfig(context, libraryDir);
+
+    const result = await runAgentics(
+      context,
+      ["add", "--name", "careful-agent", sourceDir],
+      { env: { AGENTICS_IMPORT_TYPE: "agent" } },
+    );
+
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.equal(
+      await readFile(
+        join(context.projectDir, ".codex", "agents", "careful-agent", "notes.txt"),
+        "utf8",
+      ),
+      "Act carefully.\n",
+    );
+    assert.deepEqual(
+      JSON.parse(await readFile(join(libraryDir, "index.json"), "utf8")),
+      {
+        "careful-agent": {
+          description: "",
+          path: "agents/careful-agent",
+          type: "agent",
+          upstream: sourceDir,
+        },
+      },
+    );
   });
 
   test("updates an upstream package, removes stale files, pushes, and reinstalls", async () => {
@@ -527,4 +666,62 @@ async function createContentLibraryRemote(
   await git(repoDir, ["push", "-u", "origin", "HEAD"]);
 
   return remoteDir;
+}
+
+async function serveStaticDirectory(
+  rootDir: string,
+): Promise<{ close: () => Promise<void>; url: string }> {
+  const server = createServer(async (request, response) => {
+    try {
+      const pathname = decodeURIComponent(new URL(request.url ?? "/", "http://x").pathname);
+      const requestedPath = resolve(rootDir, `.${pathname}`);
+      const requestedRelative = relative(rootDir, requestedPath);
+
+      if (requestedRelative.startsWith("..")) {
+        response.writeHead(403).end();
+        return;
+      }
+
+      const requestedStat = await stat(requestedPath);
+      if (requestedStat.isDirectory()) {
+        const entries = await readdir(requestedPath);
+        response.writeHead(200, { "content-type": "text/html" });
+        response.end(
+          entries
+            .map((entry) => `<a href="${encodeURIComponent(entry)}">${entry}</a>`)
+            .join("\n"),
+        );
+        return;
+      }
+
+      response.writeHead(200, { "content-type": "text/plain" });
+      response.end(await readFile(requestedPath));
+    } catch {
+      response.writeHead(404).end();
+    }
+  });
+
+  await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("Test server did not bind to a TCP port");
+  }
+
+  return {
+    close: () => closeServer(server),
+    url: `http://127.0.0.1:${address.port}`,
+  };
+}
+
+function closeServer(server: Server): Promise<void> {
+  return new Promise((resolveClose, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolveClose();
+    });
+  });
 }

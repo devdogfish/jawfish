@@ -5,6 +5,7 @@ import {
   cp,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rm,
   stat,
@@ -133,6 +134,24 @@ export async function promptForTool(allowedTools: string[]): Promise<string> {
     cancel("No tool selected");
     process.exitCode = 1;
     return "";
+  }
+
+  return selected;
+}
+
+export async function promptForAgenticType(packagePath: string): Promise<AgenticType> {
+  const selected = await select({
+    message: `Select agentic type for ${packagePath}`,
+    options: [
+      { label: "skill", value: "skill" },
+      { label: "agent", value: "agent" },
+      { label: "prompt", value: "prompt" },
+    ],
+  });
+
+  if (isCancel(selected)) {
+    cancel("No agentic type selected");
+    throw new Error("No agentic type selected");
   }
 
   return selected;
@@ -414,20 +433,122 @@ async function acquireLocalSource(source: string): Promise<AcquiredSource> {
 
 async function acquireUrlSource(source: string): Promise<AcquiredSource> {
   const tempDir = await mkdtemp(join(tmpdir(), "agentics-source-"));
+  const url = new URL(source);
+  const fileName = basename(url.pathname) || "agentic.md";
+  const response = await fetchUrl(source);
+
+  if (isDirectoryListing(response)) {
+    await downloadUrlDirectory(source, tempDir, response.links);
+    return {
+      inferredName: inferUrlPackageName(url.pathname),
+      packagePath: tempDir,
+    };
+  }
+
+  const parentUrl = new URL(".", source).toString();
+  const parentResponse = await fetchUrl(parentUrl, false);
+  const filePath = join(tempDir, fileName);
+  if (parentResponse !== undefined && isDirectoryListing(parentResponse)) {
+    await downloadUrlDirectory(parentUrl, tempDir, parentResponse.links);
+  } else {
+    await writeFile(filePath, response.body);
+  }
+
+  return {
+    entryFile: filePath,
+    inferredName: inferUrlPackageName(dirname(url.pathname)) || inferPackageName(fileName),
+    packagePath: tempDir,
+  };
+}
+
+interface UrlResponse {
+  body: Buffer;
+  contentType: string;
+  links: string[];
+}
+
+async function fetchUrl(source: string): Promise<UrlResponse>;
+async function fetchUrl(
+  source: string,
+  throwOnMissing: false,
+): Promise<UrlResponse | undefined>;
+async function fetchUrl(
+  source: string,
+  throwOnMissing = true,
+): Promise<UrlResponse | undefined> {
   const response = await fetch(source);
   if (!response.ok) {
+    if (!throwOnMissing && response.status === 404) {
+      return undefined;
+    }
+
     throw new Error(`Failed to fetch ${source}: ${response.status} ${response.statusText}`);
   }
 
-  const url = new URL(source);
-  const fileName = basename(url.pathname) || "agentic.md";
-  const filePath = join(tempDir, fileName);
-  await writeFile(filePath, Buffer.from(await response.arrayBuffer()));
+  const body = Buffer.from(await response.arrayBuffer());
+  const contentType = response.headers.get("content-type") ?? "";
   return {
-    entryFile: filePath,
-    inferredName: basename(dirname(url.pathname)) || inferPackageName(fileName),
-    packagePath: tempDir,
+    body,
+    contentType,
+    links: parseHtmlLinks(body.toString("utf8")),
   };
+}
+
+function isDirectoryListing(response: UrlResponse): boolean {
+  return response.contentType.includes("text/html") && response.links.length > 0;
+}
+
+async function downloadUrlDirectory(
+  source: string,
+  destination: string,
+  links?: string[],
+): Promise<void> {
+  const directoryUrl = source.endsWith("/") ? source : `${source}/`;
+  const response = links === undefined ? await fetchUrl(directoryUrl) : undefined;
+  const directoryLinks = links ?? response?.links ?? [];
+
+  await mkdir(destination, { recursive: true });
+
+  for (const link of directoryLinks) {
+    const childUrl = new URL(link, directoryUrl);
+    if (!isImportableChildUrl(childUrl, directoryUrl)) {
+      continue;
+    }
+
+    const childName = basename(childUrl.pathname.replace(/\/$/u, ""));
+    if (childName === "") {
+      continue;
+    }
+
+    const childResponse = await fetchUrl(childUrl.toString());
+    const childDestination = join(destination, childName);
+    if (isDirectoryListing(childResponse)) {
+      await downloadUrlDirectory(childUrl.toString(), childDestination, childResponse.links);
+      continue;
+    }
+
+    await writeFile(childDestination, childResponse.body);
+  }
+}
+
+function parseHtmlLinks(html: string): string[] {
+  return [...html.matchAll(/href\s*=\s*["']([^"']+)["']/giu)]
+    .map((match) => match[1])
+    .filter((href) => href !== "" && !href.startsWith("#") && !href.startsWith("?"));
+}
+
+function isImportableChildUrl(childUrl: URL, parentUrl: string): boolean {
+  const parent = new URL(parentUrl);
+  return (
+    childUrl.origin === parent.origin &&
+    childUrl.pathname !== parent.pathname &&
+    childUrl.pathname.startsWith(parent.pathname) &&
+    !childUrl.pathname.includes("..")
+  );
+}
+
+function inferUrlPackageName(pathname: string): string {
+  return basename(pathname.replace(/\/$/u, ""));
 }
 
 async function updatePackage(
@@ -563,29 +684,30 @@ async function resolveContentLibrary(config: Config): Promise<string> {
 }
 
 async function readCatalog(libraryDir: string): Promise<Catalog> {
+  const indexPath = join(libraryDir, indexCatalogFile);
+  if (await exists(indexPath)) {
+    const parsed = JSON.parse(await readFile(indexPath, "utf8")) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new Error(`Invalid catalog at ${indexPath}: expected name-keyed object`);
+    }
+
+    return validateCatalog(indexPath, {
+      agentics: parsed as Record<string, CatalogEntry>,
+    });
+  }
+
   const legacyPath = join(libraryDir, catalogFile);
   if (await exists(legacyPath)) {
     const parsed = JSON.parse(await readFile(legacyPath, "utf8")) as Partial<Catalog>;
     return validateCatalog(legacyPath, { agentics: parsed.agentics ?? {} });
   }
 
-  const indexPath = join(libraryDir, indexCatalogFile);
-  if (!(await exists(indexPath))) {
-    return { agentics: {} };
-  }
-
-  const parsed = JSON.parse(await readFile(indexPath, "utf8")) as unknown;
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error(`Invalid catalog at ${indexPath}: expected name-keyed object`);
-  }
-
-  return validateCatalog(indexPath, {
-    agentics: parsed as Record<string, CatalogEntry>,
-  });
+  return { agentics: {} };
 }
 
 async function writeCatalog(libraryDir: string, catalog: Catalog): Promise<void> {
-  await writeJson(join(libraryDir, catalogFile), catalog);
+  await writeJson(join(libraryDir, indexCatalogFile), catalog.agentics);
+  await rm(join(libraryDir, catalogFile), { force: true });
 }
 
 function validateCatalog(path: string, catalog: Catalog): Catalog {
@@ -703,23 +825,48 @@ async function inferType(
 ): Promise<AgenticType> {
   const skillPath = join(packagePath, "SKILL.md");
   const agentPath = join(packagePath, "AGENT.md");
+  const detectedTypes: AgenticType[] = [];
 
   if (await exists(skillPath)) {
-    return "skill";
+    detectedTypes.push("skill");
   }
 
   if (await exists(agentPath)) {
-    return "agent";
+    detectedTypes.push("agent");
   }
 
+  if (detectedTypes.length === 0 && await hasPromptSignal(packagePath, entryFile)) {
+    detectedTypes.push("prompt");
+  }
+
+  if (detectedTypes.length === 1) {
+    return detectedTypes[0];
+  }
+
+  const envType = process.env.AGENTICS_IMPORT_TYPE;
+  if (envType !== undefined) {
+    if (envType === "skill" || envType === "agent" || envType === "prompt") {
+      return envType;
+    }
+
+    throw new Error(`Invalid AGENTICS_IMPORT_TYPE: ${envType}`);
+  }
+
+  return promptForAgenticType(packagePath);
+}
+
+async function hasPromptSignal(
+  packagePath: string,
+  entryFile: string | undefined,
+): Promise<boolean> {
   if (entryFile !== undefined && promptExtensions.has(extname(entryFile))) {
-    return "prompt";
+    return true;
   }
 
-  throw new Error(
-    `Could not infer agentic type for ${packagePath}. ` +
-      "Add SKILL.md, AGENT.md, or import a prompt-like file.",
-  );
+  const entries = await readdir(packagePath, { withFileTypes: true });
+  return entries.filter((entry) => {
+    return entry.isFile() && promptExtensions.has(extname(entry.name));
+  }).length === 1;
 }
 
 function inferPackageName(packagePath: string): string {
