@@ -29,8 +29,9 @@ const indexCatalogFile = "index.json";
 const projectManifestFile = "agentics.json";
 const managedMarkerFile = ".agentics-managed.json";
 const defaultTools = ["codex", "claude-code", "hermes"] as const;
+const agenticTypes = ["skill", "agent", "prompt"] as const;
 
-type AgenticType = "skill" | "agent" | "prompt";
+type AgenticType = typeof agenticTypes[number];
 type InstallScope = "project" | "global";
 
 interface CommandSpec {
@@ -142,11 +143,7 @@ export async function promptForTool(allowedTools: string[]): Promise<string> {
 export async function promptForAgenticType(packagePath: string): Promise<AgenticType> {
   const selected = await select({
     message: `Select agentic type for ${packagePath}`,
-    options: [
-      { label: "skill", value: "skill" },
-      { label: "agent", value: "agent" },
-      { label: "prompt", value: "prompt" },
-    ],
+    options: agenticTypes.map((type) => ({ label: type, value: type })),
   });
 
   if (isCancel(selected)) {
@@ -435,10 +432,10 @@ async function acquireUrlSource(source: string): Promise<AcquiredSource> {
   const tempDir = await mkdtemp(join(tmpdir(), "agentics-source-"));
   const url = new URL(source);
   const fileName = basename(url.pathname) || "agentic.md";
-  const response = await fetchUrl(source);
+  const sourceResponse = await fetchUrl(source);
 
-  if (isDirectoryListing(response)) {
-    await downloadUrlDirectory(source, tempDir, response.links);
+  if (isDirectoryListing(sourceResponse)) {
+    await downloadUrlDirectory(source, tempDir, sourceResponse.links);
     return {
       inferredName: inferUrlPackageName(url.pathname),
       packagePath: tempDir,
@@ -448,10 +445,11 @@ async function acquireUrlSource(source: string): Promise<AcquiredSource> {
   const parentUrl = new URL(".", source).toString();
   const parentResponse = await fetchUrl(parentUrl, false);
   const filePath = join(tempDir, fileName);
+
   if (parentResponse !== undefined && isDirectoryListing(parentResponse)) {
     await downloadUrlDirectory(parentUrl, tempDir, parentResponse.links);
   } else {
-    await writeFile(filePath, response.body);
+    await writeFile(filePath, sourceResponse.body);
   }
 
   return {
@@ -501,15 +499,14 @@ function isDirectoryListing(response: UrlResponse): boolean {
 async function downloadUrlDirectory(
   source: string,
   destination: string,
-  links?: string[],
+  directoryLinks?: string[],
 ): Promise<void> {
   const directoryUrl = source.endsWith("/") ? source : `${source}/`;
-  const response = links === undefined ? await fetchUrl(directoryUrl) : undefined;
-  const directoryLinks = links ?? response?.links ?? [];
+  const links = directoryLinks ?? (await fetchUrl(directoryUrl)).links;
 
   await mkdir(destination, { recursive: true });
 
-  for (const link of directoryLinks) {
+  for (const link of links) {
     const childUrl = new URL(link, directoryUrl);
     if (!isImportableChildUrl(childUrl, directoryUrl)) {
       continue;
@@ -535,6 +532,10 @@ function parseHtmlLinks(html: string): string[] {
   return [...html.matchAll(/href\s*=\s*["']([^"']+)["']/giu)]
     .map((match) => match[1])
     .filter((href) => href !== "" && !href.startsWith("#") && !href.startsWith("?"));
+}
+
+function isAgenticType(value: string): value is AgenticType {
+  return agenticTypes.includes(value as AgenticType);
 }
 
 function isImportableChildUrl(childUrl: URL, parentUrl: string): boolean {
@@ -843,13 +844,13 @@ async function inferType(
     return detectedTypes[0];
   }
 
-  const envType = process.env.AGENTICS_IMPORT_TYPE;
-  if (envType !== undefined) {
-    if (envType === "skill" || envType === "agent" || envType === "prompt") {
-      return envType;
+  const envImportType = process.env.AGENTICS_IMPORT_TYPE;
+  if (envImportType !== undefined) {
+    if (isAgenticType(envImportType)) {
+      return envImportType;
     }
 
-    throw new Error(`Invalid AGENTICS_IMPORT_TYPE: ${envType}`);
+    throw new Error(`Invalid AGENTICS_IMPORT_TYPE: ${envImportType}`);
   }
 
   return promptForAgenticType(packagePath);
@@ -864,9 +865,11 @@ async function hasPromptSignal(
   }
 
   const entries = await readdir(packagePath, { withFileTypes: true });
-  return entries.filter((entry) => {
+  const promptFiles = entries.filter((entry) => {
     return entry.isFile() && promptExtensions.has(extname(entry.name));
-  }).length === 1;
+  });
+
+  return promptFiles.length === 1;
 }
 
 function inferPackageName(packagePath: string): string {
