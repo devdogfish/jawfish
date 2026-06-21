@@ -3,8 +3,9 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { errorHasCode, errorMessage } from "./errors.ts";
+import { supportedTools } from "./tool-adapters.ts";
 
-export const defaultAllowedTools = ["codex", "claude-code", "hermes"] as const;
+export const defaultAllowedTools = supportedTools;
 
 export interface AgenticsConfig {
   contentLibrary?: string;

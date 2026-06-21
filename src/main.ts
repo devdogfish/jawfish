@@ -21,16 +21,20 @@ import {
   resolve,
 } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  assertSupportedTool,
+  destinationPath,
+  supportedTools,
+  type AgenticType,
+  type InstallScope,
+} from "./tool-adapters.ts";
 
 const version = "0.1.0";
 const catalogFile = "catalog.json";
 const indexCatalogFile = "index.json";
 const projectManifestFile = "agentics.json";
 const managedMarkerFile = ".agentics-managed.json";
-const defaultTools = ["codex", "claude-code", "hermes"] as const;
-
-type AgenticType = "skill" | "agent" | "prompt";
-type InstallScope = "project" | "global";
+const defaultTools = supportedTools;
 
 interface CommandSpec {
   description: string;
@@ -220,7 +224,9 @@ async function installCommand(args: ParsedArgs): Promise<number> {
   const names = Object.keys(manifest.agentics);
 
   for (const name of names) {
-    await materialize(libraryDir, catalog, name, scope, manifest.agentics[name].tool);
+    const tool = manifest.agentics[name].tool;
+    assertConfiguredTool(config, tool);
+    await materialize(libraryDir, catalog, name, scope, tool);
   }
 
   console.log(`Installed ${names.length} agentics to ${scope}`);
@@ -243,6 +249,7 @@ async function removeCommand(args: ParsedArgs): Promise<number> {
   const catalogEntry = catalog.agentics[name];
 
   if (manifestEntry !== undefined && catalogEntry !== undefined) {
+    assertConfiguredTool(config, manifestEntry.tool);
     await removeMaterialized(name, catalogEntry.type, scope, manifestEntry.tool);
   }
 
@@ -324,7 +331,7 @@ async function materialize(
   }
 
   const sourcePath = resolveInside(libraryDir, entry.path);
-  const destination = destinationPath(name, entry.type, scope, tool);
+  const destination = destinationPath(name, entry.type, scope, tool, toolPaths());
   await ensureManagedDestination(destination);
   await rm(destination, { force: true, recursive: true });
   await mkdir(destination, { recursive: true });
@@ -349,7 +356,7 @@ async function removeMaterialized(
   scope: InstallScope,
   tool: string,
 ): Promise<void> {
-  const destination = destinationPath(name, type, scope, tool);
+  const destination = destinationPath(name, type, scope, tool, toolPaths());
   await rm(destination, { force: true, recursive: true });
 }
 
@@ -482,6 +489,7 @@ async function resolveTool(config: Config): Promise<string> {
   config.allowedTools = allowedTools;
 
   if (config.defaultTool !== undefined) {
+    assertConfiguredTool(config, config.defaultTool);
     return config.defaultTool;
   }
 
@@ -490,9 +498,20 @@ async function resolveTool(config: Config): Promise<string> {
     throw new Error("No default tool selected");
   }
 
+  assertConfiguredTool(config, selected);
   config.defaultTool = selected;
   await writeConfig(config);
   return selected;
+}
+
+function assertConfiguredTool(config: Config, tool: string): void {
+  if (!config.allowedTools.includes(tool)) {
+    throw new Error(
+      `Tool is not configured: ${tool}. Configured tools: ${config.allowedTools.join(", ")}`,
+    );
+  }
+
+  assertSupportedTool(tool);
 }
 
 async function loadConfig(): Promise<Config> {
@@ -513,10 +532,7 @@ async function loadConfig(): Promise<Config> {
 
   const envDefaultTool = process.env.AGENTICS_DEFAULT_TOOL;
   if (config.defaultTool === undefined && envDefaultTool !== undefined) {
-    if (!config.allowedTools.includes(envDefaultTool)) {
-      throw new Error(`Default tool is not allowed: ${envDefaultTool}`);
-    }
-
+    assertConfiguredTool(config, envDefaultTool);
     config.defaultTool = envDefaultTool;
     changed = true;
   }
@@ -664,28 +680,6 @@ async function writeManifest(scope: InstallScope, manifest: Manifest): Promise<v
   await writeJson(manifestPath(scope), manifest);
 }
 
-function destinationPath(
-  name: string,
-  type: AgenticType,
-  scope: InstallScope,
-  tool: string,
-): string {
-  return join(toolRoot(tool, scope), typeFolder(type), name);
-}
-
-function toolRoot(tool: string, scope: InstallScope): string {
-  switch (tool) {
-    case "codex":
-      return codexRoot(scope);
-    case "claude-code":
-      return join(scopeRoot(scope), ".claude");
-    case "hermes":
-      return join(scopeRoot(scope), ".hermes");
-    default:
-      throw new Error(`Unsupported tool: ${tool}`);
-  }
-}
-
 function typeFolder(type: AgenticType): string {
   switch (type) {
     case "agent":
@@ -758,16 +752,16 @@ function manifestPath(scope: InstallScope): string {
   return join(agenticsHome(), projectManifestFile);
 }
 
-function scopeRoot(scope: InstallScope): string {
-  return scope === "project" ? process.cwd() : homeDir();
-}
-
-function codexRoot(scope: InstallScope): string {
-  return scope === "project" ? join(process.cwd(), ".codex") : codexHome();
-}
-
 function codexHome(): string {
   return process.env.CODEX_HOME ?? join(homeDir(), ".codex");
+}
+
+function toolPaths() {
+  return {
+    codexHome: codexHome(),
+    homeDir: homeDir(),
+    projectDir: process.cwd(),
+  };
 }
 
 function getScope(args: ParsedArgs): InstallScope {

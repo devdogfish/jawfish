@@ -28,6 +28,8 @@ async function setup(): Promise<CliTestContext> {
 async function writeAgenticsConfig(
   context: CliTestContext,
   libraryDir: string,
+  tool = "codex",
+  allowedTools = [tool],
 ): Promise<void> {
   const configDir = join(context.homeDir, ".config", "agentics");
 
@@ -36,9 +38,9 @@ async function writeAgenticsConfig(
     join(configDir, "config.json"),
     JSON.stringify(
       {
-        allowedTools: ["codex"],
+        allowedTools,
         contentLibrary: libraryDir,
-        defaultTool: "codex",
+        defaultTool: tool,
       },
       null,
       2,
@@ -124,55 +126,98 @@ describe("agentics CLI", () => {
     );
   });
 
-  test("adds a name-keyed catalog skill to Codex project and global directories", async () => {
+  test("adds a name-keyed catalog skill to project and global directories for each tool", async () => {
+    for (const tool of ["codex", "claude-code", "hermes"]) {
+      const context = await setup();
+      const libraryDir = join(context.rootDir, "content-library");
+      const codexHome = join(context.rootDir, "codex-home");
+      const env: Record<string, string> =
+        tool === "codex" ? { CODEX_HOME: codexHome } : {};
+      const toolDir = tool === "claude-code" ? ".claude" : `.${tool}`;
+      const projectSkill =
+        tool === "codex"
+          ? join(context.projectDir, ".codex", "skills", "focus", "SKILL.md")
+          : join(context.projectDir, toolDir, "skills", "focus", "SKILL.md");
+      const globalSkill =
+        tool === "codex"
+          ? join(codexHome, "skills", "focus", "SKILL.md")
+          : join(context.homeDir, toolDir, "skills", "focus", "SKILL.md");
+
+      await createGitRepository(libraryDir);
+      await writeIndexedFocusSkill(libraryDir);
+      await writeAgenticsConfig(context, libraryDir, tool);
+
+      const projectResult = await runAgentics(context, ["add", "focus"], { env });
+      const globalResult = await runAgentics(context, ["add", "-g", "focus"], {
+        env,
+      });
+
+      assert.equal(projectResult.exitCode, 0, projectResult.stderr);
+      assert.equal(globalResult.exitCode, 0, globalResult.stderr);
+      assert.equal(
+        await readFile(projectSkill, "utf8"),
+        "# Focus\n\nUse focused execution.\n",
+      );
+      assert.equal(
+        await readFile(globalSkill, "utf8"),
+        "# Focus\n\nUse focused execution.\n",
+      );
+      assert.deepEqual(
+        JSON.parse(await readFile(join(context.projectDir, "agentics.json"), "utf8")),
+        { agentics: { focus: { tool } } },
+      );
+      assert.deepEqual(
+        JSON.parse(await readFile(join(context.homeDir, "agentics.json"), "utf8")),
+        { agentics: { focus: { tool } } },
+      );
+    }
+  });
+
+  test("fails when default tool is not configured", async () => {
     const context = await setup();
     const libraryDir = join(context.rootDir, "content-library");
-    const codexHome = join(context.rootDir, "codex-home");
 
     await createGitRepository(libraryDir);
     await writeIndexedFocusSkill(libraryDir);
-    await writeAgenticsConfig(context, libraryDir);
+    await writeAgenticsConfig(context, libraryDir, "hermes", ["codex"]);
 
-    const projectResult = await runAgentics(context, ["add", "focus"], {
-      env: { CODEX_HOME: codexHome },
-    });
-    const globalResult = await runAgentics(context, ["add", "-g", "focus"], {
-      env: { CODEX_HOME: codexHome },
-    });
+    const result = await runAgentics(context, ["add", "focus"]);
 
-    assert.equal(projectResult.exitCode, 0, projectResult.stderr);
-    assert.equal(globalResult.exitCode, 0, globalResult.stderr);
-    assert.equal(
-      await readFile(
-        join(context.projectDir, ".codex", "skills", "focus", "SKILL.md"),
-        "utf8",
-      ),
-      "# Focus\n\nUse focused execution.\n",
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stderr, /Tool is not configured: hermes/);
+  });
+
+  test("fails when manifest tool is not configured", async () => {
+    const context = await setup();
+    const libraryDir = join(context.rootDir, "content-library");
+
+    await createGitRepository(libraryDir);
+    await writeIndexedFocusSkill(libraryDir);
+    await writeAgenticsConfig(context, libraryDir, "codex", ["codex"]);
+    await writeFile(
+      join(context.projectDir, "agentics.json"),
+      JSON.stringify({ agentics: { focus: { tool: "hermes" } } }, null, 2),
     );
-    assert.equal(
-      await readFile(join(codexHome, "skills", "focus", "SKILL.md"), "utf8"),
-      "# Focus\n\nUse focused execution.\n",
-    );
-    assert.deepEqual(
-      JSON.parse(await readFile(join(context.projectDir, "agentics.json"), "utf8")),
-      {
-        agentics: {
-          focus: {
-            tool: "codex",
-          },
-        },
-      },
-    );
-    assert.deepEqual(
-      JSON.parse(await readFile(join(context.homeDir, "agentics.json"), "utf8")),
-      {
-        agentics: {
-          focus: {
-            tool: "codex",
-          },
-        },
-      },
-    );
+
+    const result = await runAgentics(context, ["install"]);
+
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stderr, /Tool is not configured: hermes/);
+  });
+
+  test("fails with a clear error for unsupported configured tools", async () => {
+    const context = await setup();
+    const libraryDir = join(context.rootDir, "content-library");
+
+    await createGitRepository(libraryDir);
+    await writeIndexedFocusSkill(libraryDir);
+    await writeAgenticsConfig(context, libraryDir, "unknown", ["unknown"]);
+
+    const result = await runAgentics(context, ["add", "focus"]);
+
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stderr, /Unsupported tool: unknown/);
+    assert.match(result.stderr, /Supported tools: codex, claude-code, hermes/);
   });
 
   test("installs and removes project manifest agentics", async () => {
