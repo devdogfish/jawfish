@@ -674,7 +674,7 @@ function destinationPath(
 
   switch (tool) {
     case "codex":
-      return join(scopeRoot(scope), ".codex", folder, name);
+      return join(codexRoot(scope), folder, name);
     case "claude-code":
       return join(scopeRoot(scope), ".claude", folder, name);
     case "hermes":
@@ -758,6 +758,14 @@ function manifestPath(scope: InstallScope): string {
 
 function scopeRoot(scope: InstallScope): string {
   return scope === "project" ? process.cwd() : homeDir();
+}
+
+function codexRoot(scope: InstallScope): string {
+  return scope === "project" ? join(process.cwd(), ".codex") : codexHome();
+}
+
+function codexHome(): string {
+  return process.env.CODEX_HOME ?? join(homeDir(), ".codex");
 }
 
 function getScope(args: ParsedArgs): InstallScope {

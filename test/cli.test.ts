@@ -102,6 +102,75 @@ describe("agentics CLI", () => {
     );
   });
 
+  test("adds an existing catalog skill to Codex project and global directories", async () => {
+    const context = await setup();
+    const libraryDir = join(context.rootDir, "content-library");
+    const codexHome = join(context.rootDir, "codex-home");
+
+    await createGitRepository(libraryDir);
+    await mkdir(join(libraryDir, "skills", "focus"), { recursive: true });
+    await writeFile(
+      join(libraryDir, "index.json"),
+      JSON.stringify(
+        {
+          focus: {
+            description: "Focus workflow",
+            path: "skills/focus",
+            type: "skill",
+          },
+        },
+        null,
+        2,
+      ),
+    );
+    await writeFile(
+      join(libraryDir, "skills", "focus", "SKILL.md"),
+      "# Focus\n\nUse focused execution.\n",
+    );
+    await writeAgenticsConfig(context, libraryDir);
+
+    const projectResult = await runAgentics(context, ["add", "focus"], {
+      env: { CODEX_HOME: codexHome },
+    });
+    const globalResult = await runAgentics(context, ["add", "-g", "focus"], {
+      env: { CODEX_HOME: codexHome },
+    });
+
+    assert.equal(projectResult.exitCode, 0, projectResult.stderr);
+    assert.equal(globalResult.exitCode, 0, globalResult.stderr);
+    assert.equal(
+      await readFile(
+        join(context.projectDir, ".codex", "skills", "focus", "SKILL.md"),
+        "utf8",
+      ),
+      "# Focus\n\nUse focused execution.\n",
+    );
+    assert.equal(
+      await readFile(join(codexHome, "skills", "focus", "SKILL.md"), "utf8"),
+      "# Focus\n\nUse focused execution.\n",
+    );
+    assert.deepEqual(
+      JSON.parse(await readFile(join(context.projectDir, "agentics.json"), "utf8")),
+      {
+        agentics: {
+          focus: {
+            tool: "codex",
+          },
+        },
+      },
+    );
+    assert.deepEqual(
+      JSON.parse(await readFile(join(context.homeDir, "agentics.json"), "utf8")),
+      {
+        agentics: {
+          focus: {
+            tool: "codex",
+          },
+        },
+      },
+    );
+  });
+
   test("installs and removes project manifest agentics", async () => {
     const context = await setup();
     const libraryDir = join(context.rootDir, "content-library");
