@@ -2,6 +2,7 @@ import { cancel, isCancel, select } from "@clack/prompts";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { errorHasCode, errorMessage } from "./errors.ts";
 
 export const defaultAllowedTools = ["codex", "claude-code", "hermes"] as const;
 
@@ -29,8 +30,8 @@ export async function loadConfig(
 ): Promise<AgenticsConfig> {
   const env = options.env ?? process.env;
   const home = agenticsHome(env);
-  const path = configPath(home);
-  const existing = await readConfig(path);
+  const filePath = configPath(home);
+  const existing = await readConfig(filePath);
   const config: AgenticsConfig = {
     ...existing,
     allowedTools: existing.allowedTools ?? [...defaultAllowedTools],
@@ -48,7 +49,7 @@ export async function loadConfig(
   }
 
   if (changed) {
-    await writeConfig(path, config);
+    await writeConfig(filePath, config);
   }
 
   return config;
@@ -90,7 +91,7 @@ async function readConfig(path: string): Promise<Partial<AgenticsConfig>> {
   try {
     return JSON.parse(await readFile(path, "utf8")) as Partial<AgenticsConfig>;
   } catch (error) {
-    if (isNotFoundError(error)) {
+    if (errorHasCode(error, "ENOENT")) {
       return {};
     }
 
@@ -101,17 +102,4 @@ async function readConfig(path: string): Promise<Partial<AgenticsConfig>> {
 async function writeConfig(path: string, config: AgenticsConfig): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify(config, null, 2)}\n`);
-}
-
-function isNotFoundError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === "ENOENT"
-  );
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

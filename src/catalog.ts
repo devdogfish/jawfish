@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import { errorMessage } from "./errors.ts";
 
 const catalogEntrySchema = z.object({
   type: z.enum(["skill", "agent", "prompt"]),
@@ -47,8 +48,4 @@ export async function readCatalog(libraryDir: string): Promise<Catalog> {
   }
 
   return catalog;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
