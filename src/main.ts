@@ -7,6 +7,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  realpath,
   rm,
   stat,
   writeFile,
@@ -1364,11 +1365,15 @@ function catalogHasAgentic(catalog: Catalog, name: string): boolean {
   return Object.hasOwn(catalog.agentics, name);
 }
 
-function isMainModule(): boolean {
-  return (
-    process.argv[1] !== undefined &&
-    fileURLToPath(import.meta.url) === process.argv[1]
-  );
+async function isMainModule(): Promise<boolean> {
+  if (process.argv[1] === undefined) {
+    return false;
+  }
+
+  const modulePath = await realpath(fileURLToPath(import.meta.url));
+  const argvPath = await realpath(process.argv[1]);
+
+  return modulePath === argvPath;
 }
 
 async function waitForExit(child: ReturnType<typeof spawn>): Promise<number | null> {
@@ -1388,6 +1393,6 @@ async function readStream(stream: NodeJS.ReadableStream): Promise<string> {
   return output;
 }
 
-if (isMainModule()) {
+if (await isMainModule()) {
   process.exitCode = await run(process.argv.slice(2));
 }
