@@ -44,6 +44,7 @@ const planSchema = z.object({
 // Maximum number of plan→execute→merge cycles before stopping.
 // Raise this if your backlog is large; lower it for a quick smoke-test run.
 const MAX_ITERATIONS = 10;
+const CODEX_MODEL = process.env.SANDCASTLE_CODEX_MODEL ?? "gpt-5.5";
 
 const hostCodexHome = path.join(os.homedir(), ".codex");
 const sandboxCodexMount = "/mnt/host-codex";
@@ -104,8 +105,8 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     // One iteration is enough: the planner just needs to read and reason,
     // not write code. (Structured output requires maxIterations: 1.)
     maxIterations: 1,
-    // Opus for planning: dependency analysis benefits from deeper reasoning.
-    agent: sandcastle.codex("gpt-5.4"),
+    // Use a supported Codex model for ChatGPT-auth runs.
+    agent: sandcastle.codex(CODEX_MODEL),
     promptFile: "./.sandcastle/plan-prompt.md",
     // Extract and validate the <plan> JSON into a typed object. Throws
     // StructuredOutputError if the tag is missing, the JSON is malformed, or
@@ -151,7 +152,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
         const implement = await issueSandbox.run({
           name: "implementer",
           maxIterations: 100,
-          agent: sandcastle.codex("gpt-5.4"),
+          agent: sandcastle.codex(CODEX_MODEL),
           promptFile: "./.sandcastle/implement-prompt.md",
           promptArgs: {
             TASK_ID: issue.id,
@@ -165,7 +166,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
           const review = await issueSandbox.run({
             name: "reviewer",
             maxIterations: 1,
-            agent: sandcastle.codex("gpt-5.4"),
+            agent: sandcastle.codex(CODEX_MODEL),
             promptFile: "./.sandcastle/review-prompt.md",
             promptArgs: {
               BRANCH: issue.branch,
@@ -236,7 +237,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     sandbox: dockerSandbox,
     name: "merger",
     maxIterations: 1,
-    agent: sandcastle.codex("gpt-5.4"),
+    agent: sandcastle.codex(CODEX_MODEL),
     promptFile: "./.sandcastle/merge-prompt.md",
     promptArgs: {
       // A markdown list of branch names, one per line.

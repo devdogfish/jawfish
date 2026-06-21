@@ -1,9 +1,15 @@
 {
   "scripts": {
-    "sandcastle": "npx tsx .sandcastle/main.mts"
+    "sandcastle": "npx tsx .sandcastle/main.mts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@ai-hero/sandcastle": "^0.10.0",
     "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@standard-schema/spec": "^1.1.0",
+    "@types/node": "^26.0.0",
+    "typescript": "^6.0.3"
   }
 }

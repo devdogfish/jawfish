@@ -15,3 +15,5 @@ This repo uses the default triage labels: `needs-triage`, `needs-info`, `ready-f
 ### Domain docs
 
 This repo uses single-context domain docs. See `docs/agents/domain.md`.
+
+Use `bun` instead of `npm`.
