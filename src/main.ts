@@ -77,6 +77,14 @@ interface CommandResult {
   exitCode: number | null;
 }
 
+interface AcquiredSource {
+  entryFile?: string;
+  inferredName: string;
+  packagePath: string;
+}
+
+type PushResult = { ok: true } | { ok: false; error: string };
+
 const commandSpecs = {
   add: {
     description: "Install an agentic from the library, or import a URL/local path.",
@@ -183,22 +191,20 @@ async function addCommand(args: ParsedArgs): Promise<number> {
   const catalog = await readCatalog(libraryDir);
   const scope = getScope(args);
 
-  if (!Object.hasOwn(catalog.agentics, source)) {
-    const imported = await importPackage(libraryDir, catalog, source, args.name);
-    const pushResult = await commitAndPush(libraryDir, `add ${imported}`);
-    if (!pushResult.ok) {
-      printPushFailure(pushResult.error);
-      return 1;
-    }
-
-    await writeCatalog(libraryDir, catalog);
-    await installOne(libraryDir, catalog, imported, scope, config);
-    console.log(`Added ${imported} to ${scope}`);
+  if (catalogHasAgentic(catalog, source)) {
+    await installOne(libraryDir, catalog, source, scope, config);
+    console.log(`Added ${source} to ${scope}`);
     return 0;
   }
 
-  await installOne(libraryDir, catalog, source, scope, config);
-  console.log(`Added ${source} to ${scope}`);
+  const imported = await importPackage(libraryDir, catalog, source, args.name);
+  await writeCatalog(libraryDir, catalog);
+  if (!(await pushLibraryChanges(libraryDir, `add ${imported}`))) {
+    return 1;
+  }
+
+  await installOne(libraryDir, catalog, imported, scope, config);
+  console.log(`Added ${imported} to ${scope}`);
   return 0;
 }
 
@@ -209,12 +215,13 @@ async function installCommand(args: ParsedArgs): Promise<number> {
   const catalog = await readCatalog(libraryDir);
   const scope = getScope(args);
   const manifest = await readManifest(scope);
+  const names = Object.keys(manifest.agentics);
 
-  for (const name of Object.keys(manifest.agentics)) {
+  for (const name of names) {
     await materialize(libraryDir, catalog, name, scope, manifest.agentics[name].tool);
   }
 
-  console.log(`Installed ${Object.keys(manifest.agentics).length} agentics to ${scope}`);
+  console.log(`Installed ${names.length} agentics to ${scope}`);
   return 0;
 }
 
@@ -252,9 +259,7 @@ async function updateCommand(args: ParsedArgs): Promise<number> {
   if (name !== undefined) {
     await updatePackage(libraryDir, catalog, name, args.force);
     await writeCatalog(libraryDir, catalog);
-    const pushResult = await commitAndPush(libraryDir, `update ${name}`);
-    if (!pushResult.ok) {
-      printPushFailure(pushResult.error);
+    if (!(await pushLibraryChanges(libraryDir, `update ${name}`))) {
       return 1;
     }
 
@@ -275,9 +280,7 @@ async function updateCommand(args: ParsedArgs): Promise<number> {
 
   if (updated.length > 0) {
     await writeCatalog(libraryDir, catalog);
-    const pushResult = await commitAndPush(libraryDir, "update agentics");
-    if (!pushResult.ok) {
-      printPushFailure(pushResult.error);
+    if (!(await pushLibraryChanges(libraryDir, "update agentics"))) {
       return 1;
     }
 
@@ -369,7 +372,7 @@ async function importPackage(
   const acquired = await acquireSource(source);
   const name = nameOverride ?? acquired.inferredName;
 
-  if (Object.hasOwn(catalog.agentics, name)) {
+  if (catalogHasAgentic(catalog, name)) {
     throw new Error(`Agentic already exists in catalog: ${name}`);
   }
 
@@ -388,31 +391,14 @@ async function importPackage(
     upstream: source,
   };
 
-  await writeCatalog(libraryDir, catalog);
   return name;
 }
 
-async function acquireSource(
-  source: string,
-): Promise<{ entryFile?: string; inferredName: string; packagePath: string }> {
-  if (isUrl(source)) {
-    const tempDir = await mkdtemp(join(tmpdir(), "agentics-source-"));
-    const response = await fetch(source);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch ${source}: ${response.status} ${response.statusText}`);
-    }
+async function acquireSource(source: string): Promise<AcquiredSource> {
+  return isUrl(source) ? acquireUrlSource(source) : acquireLocalSource(source);
+}
 
-    const url = new URL(source);
-    const fileName = basename(url.pathname) || "agentic.md";
-    const filePath = join(tempDir, fileName);
-    await writeFile(filePath, Buffer.from(await response.arrayBuffer()));
-    return {
-      entryFile: filePath,
-      inferredName: basename(dirname(url.pathname)) || inferPackageName(fileName),
-      packagePath: tempDir,
-    };
-  }
-
+async function acquireLocalSource(source: string): Promise<AcquiredSource> {
   const localPath = resolve(process.cwd(), source);
   const sourceStat = await stat(localPath);
   const packagePath = sourceStat.isDirectory() ? localPath : dirname(localPath);
@@ -420,6 +406,24 @@ async function acquireSource(
     entryFile: sourceStat.isDirectory() ? undefined : localPath,
     inferredName: inferPackageName(packagePath),
     packagePath,
+  };
+}
+
+async function acquireUrlSource(source: string): Promise<AcquiredSource> {
+  const tempDir = await mkdtemp(join(tmpdir(), "agentics-source-"));
+  const response = await fetch(source);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ${source}: ${response.status} ${response.statusText}`);
+  }
+
+  const url = new URL(source);
+  const fileName = basename(url.pathname) || "agentic.md";
+  const filePath = join(tempDir, fileName);
+  await writeFile(filePath, Buffer.from(await response.arrayBuffer()));
+  return {
+    entryFile: filePath,
+    inferredName: basename(dirname(url.pathname)) || inferPackageName(fileName),
+    packagePath: tempDir,
   };
 }
 
@@ -710,19 +714,21 @@ ${spec.options.map((option) => `  ${option}`).join("\n")}`);
 }
 
 async function syncLibrary(libraryDir: string): Promise<void> {
-  if (await exists(join(libraryDir, ".git"))) {
-    const upstream = await runCommand(
-      "git",
-      ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
-      libraryDir,
-      false,
-    );
-    if (upstream.exitCode !== 0) {
-      return;
-    }
-
-    await runCommand("git", ["pull", "--ff-only"], libraryDir);
+  if (!(await exists(join(libraryDir, ".git")))) {
+    return;
   }
+
+  const upstream = await runCommand(
+    "git",
+    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    libraryDir,
+    false,
+  );
+  if (upstream.exitCode !== 0) {
+    return;
+  }
+
+  await runCommand("git", ["pull", "--ff-only"], libraryDir);
 }
 
 async function dirtyPaths(libraryDir: string, packagePath: string): Promise<string[]> {
@@ -745,7 +751,7 @@ async function dirtyPaths(libraryDir: string, packagePath: string): Promise<stri
 async function commitAndPush(
   libraryDir: string,
   message: string,
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<PushResult> {
   if (!(await exists(join(libraryDir, ".git")))) {
     return { ok: true };
   }
@@ -763,6 +769,16 @@ async function commitAndPush(
   }
 
   return { ok: true };
+}
+
+async function pushLibraryChanges(libraryDir: string, message: string): Promise<boolean> {
+  const pushResult = await commitAndPush(libraryDir, message);
+  if (pushResult.ok) {
+    return true;
+  }
+
+  printPushFailure(pushResult.error);
+  return false;
 }
 
 function printPushFailure(error: string): void {
@@ -839,6 +855,10 @@ function isHelp(value: string): boolean {
 
 function isCommandName(value: string): value is CommandName {
   return Object.hasOwn(commandSpecs, value);
+}
+
+function catalogHasAgentic(catalog: Catalog, name: string): boolean {
+  return Object.hasOwn(catalog.agentics, name);
 }
 
 function isMainModule(): boolean {
