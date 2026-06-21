@@ -1,20 +1,20 @@
 #!/usr/bin/env -S node --experimental-strip-types
 import { cancel, isCancel, select } from "@clack/prompts";
+import { fileURLToPath } from "node:url";
 
 const version = "0.1.0";
-const commands = ["add", "install", "update", "remove"] as const;
-
-type CommandName = (typeof commands)[number];
 
 interface CommandSpec {
   description: string;
+  summary: string;
   usage: string;
   options: string[];
 }
 
-const commandSpecs: Record<CommandName, CommandSpec> = {
+const commandSpecs = {
   add: {
     description: "Install an agentic from the library, or import a URL/local path later.",
+    summary: "Install or import an agentic",
     usage: "agentics add [options] <name|source>",
     options: [
       "-g, --global    Install globally",
@@ -24,11 +24,13 @@ const commandSpecs: Record<CommandName, CommandSpec> = {
   },
   install: {
     description: "Materialize manifest agentics into tool-native directories later.",
+    summary: "Materialize manifest agentics",
     usage: "agentics install [options]",
     options: ["-g, --global    Install global manifest", "-h, --help      Show help"],
   },
   update: {
     description: "Refresh one or all upstream-backed agentics later.",
+    summary: "Update upstream-backed agentics",
     usage: "agentics update [options] [name]",
     options: [
       "-F, --force     Replace dirty package contents",
@@ -37,10 +39,14 @@ const commandSpecs: Record<CommandName, CommandSpec> = {
   },
   remove: {
     description: "Remove installed managed agentics later.",
+    summary: "Remove installed agentics",
     usage: "agentics remove [options] <name>",
     options: ["-g, --global    Remove global install", "-h, --help      Show help"],
   },
-};
+} as const satisfies Record<string, CommandSpec>;
+
+type CommandName = keyof typeof commandSpecs;
+const commandNames = Object.keys(commandSpecs) as CommandName[];
 
 export async function promptForTool(allowedTools: string[]): Promise<string> {
   const selected = await select({
@@ -91,10 +97,9 @@ function printRootHelp(): void {
 Usage: agentics <command> [options]
 
 Commands:
-  add       Install or import an agentic
-  install   Materialize manifest agentics
-  update    Update upstream-backed agentics
-  remove    Remove installed agentics
+${commandNames
+  .map((command) => `  ${command.padEnd(10)}${commandSpecs[command].summary}`)
+  .join("\n")}
 
 Options:
   -h, --help      Show help
@@ -123,9 +128,16 @@ function isHelp(value: string): boolean {
 }
 
 function isCommandName(value: string): value is CommandName {
-  return commands.includes(value as CommandName);
+  return Object.hasOwn(commandSpecs, value);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+function isMainModule(): boolean {
+  return (
+    process.argv[1] !== undefined &&
+    fileURLToPath(import.meta.url) === process.argv[1]
+  );
+}
+
+if (isMainModule()) {
   process.exitCode = run(process.argv.slice(2));
 }

@@ -20,6 +20,11 @@ export interface CliTestContext {
   cleanup: () => Promise<void>;
 }
 
+interface CommandOptions {
+  cwd: string;
+  env?: Record<string, string>;
+}
+
 export async function createCliTestContext(): Promise<CliTestContext> {
   const rootDir = await mkdtemp(join(tmpdir(), "agentics-test-"));
   const homeDir = join(rootDir, "home");
@@ -50,19 +55,19 @@ export async function runAgentics(
   });
 }
 
-export async function createGitRepository(path: string): Promise<void> {
-  await mkdir(path, { recursive: true });
-  await runCommand("git", ["init", path], { cwd: repoRoot });
-  await git(path, ["config", "user.email", "agentics-test@example.com"]);
-  await git(path, ["config", "user.name", "Agentics Test"]);
-  await writeFile(join(path, "README.md"), "# Test repository\n");
-  await git(path, ["add", "README.md"]);
-  await git(path, ["commit", "-m", "initial commit"]);
+export async function createGitRepository(repositoryDir: string): Promise<void> {
+  await mkdir(repositoryDir, { recursive: true });
+  await git(repoRoot, ["init", repositoryDir]);
+  await git(repositoryDir, ["config", "user.email", "agentics-test@example.com"]);
+  await git(repositoryDir, ["config", "user.name", "Agentics Test"]);
+  await writeFile(join(repositoryDir, "README.md"), "# Test repository\n");
+  await git(repositoryDir, ["add", "README.md"]);
+  await git(repositoryDir, ["commit", "-m", "initial commit"]);
 }
 
-export async function createBareRemote(path: string): Promise<void> {
-  await mkdir(path, { recursive: true });
-  await runCommand("git", ["init", "--bare", path], { cwd: repoRoot });
+export async function createBareRemote(remoteDir: string): Promise<void> {
+  await mkdir(remoteDir, { recursive: true });
+  await git(repoRoot, ["init", "--bare", remoteDir]);
 }
 
 export async function git(cwd: string, args: string[]): Promise<CommandResult> {
@@ -80,7 +85,7 @@ export async function git(cwd: string, args: string[]): Promise<CommandResult> {
 async function runCommand(
   command: string,
   args: string[],
-  options: { cwd: string; env?: Record<string, string> },
+  options: CommandOptions,
 ): Promise<CommandResult> {
   const child = spawn(command, args, {
     cwd: options.cwd,
@@ -91,19 +96,24 @@ async function runCommand(
   const [stdout, stderr, exitCode] = await Promise.all([
     readStream(child.stdout),
     readStream(child.stderr),
-    new Promise<number | null>((resolve) => {
-      child.on("close", resolve);
-    }),
+    waitForExit(child),
   ]);
 
   return { exitCode, stderr, stdout };
+}
+
+async function waitForExit(child: ReturnType<typeof spawn>): Promise<number | null> {
+  return new Promise((resolve, reject) => {
+    child.on("close", resolve);
+    child.on("error", reject);
+  });
 }
 
 async function readStream(stream: NodeJS.ReadableStream): Promise<string> {
   let output = "";
 
   for await (const chunk of stream) {
-    output += chunk;
+    output += String(chunk);
   }
 
   return output;
