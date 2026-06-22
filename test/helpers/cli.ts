@@ -25,12 +25,12 @@ interface CommandOptions {
   env?: Record<string, string>;
 }
 
-interface RunAgenticsOptions {
+interface RunJawfishOptions {
   env?: Record<string, string>;
 }
 
 export async function createCliTestContext(): Promise<CliTestContext> {
-  const rootDir = await mkdtemp(join(tmpdir(), "agentics-test-"));
+  const rootDir = await mkdtemp(join(tmpdir(), "jawfish-test-"));
   const homeDir = join(rootDir, "home");
   const projectDir = join(rootDir, "project");
 
@@ -45,15 +45,15 @@ export async function createCliTestContext(): Promise<CliTestContext> {
   };
 }
 
-export async function runAgentics(
+export async function runJawfish(
   context: CliTestContext,
   args: string[] = [],
-  options: RunAgenticsOptions = {},
+  options: RunJawfishOptions = {},
 ): Promise<CommandResult> {
   return runCommand("node", ["--experimental-strip-types", cliEntry, ...args], {
     cwd: context.projectDir,
     env: {
-      AGENTICS_HOME: context.homeDir,
+      JAWFISH_HOME: context.homeDir,
       HOME: context.homeDir,
       XDG_CONFIG_HOME: join(context.homeDir, ".config"),
       ...options.env,
@@ -61,11 +61,17 @@ export async function runAgentics(
   });
 }
 
-export async function createGitRepository(repositoryDir: string): Promise<void> {
+export async function createGitRepository(
+  repositoryDir: string,
+): Promise<void> {
   await mkdir(repositoryDir, { recursive: true });
   await git(repoRoot, ["init", repositoryDir]);
-  await git(repositoryDir, ["config", "user.email", "agentics-test@example.com"]);
-  await git(repositoryDir, ["config", "user.name", "Agentics Test"]);
+  await git(repositoryDir, [
+    "config",
+    "user.email",
+    "jawfish-test@example.com",
+  ]);
+  await git(repositoryDir, ["config", "user.name", "Jawfish Test"]);
   await writeFile(join(repositoryDir, "README.md"), "# Test repository\n");
   await git(repositoryDir, ["add", "README.md"]);
   await git(repositoryDir, ["commit", "-m", "initial commit"]);
@@ -108,7 +114,9 @@ async function runCommand(
   return { exitCode, stderr, stdout };
 }
 
-async function waitForExit(child: ReturnType<typeof spawn>): Promise<number | null> {
+async function waitForExit(
+  child: ReturnType<typeof spawn>,
+): Promise<number | null> {
   return new Promise((resolve, reject) => {
     child.on("close", resolve);
     child.on("error", reject);

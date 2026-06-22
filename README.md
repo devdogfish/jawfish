@@ -1,42 +1,85 @@
-# agentics-cli
+<div align="center">
+  <picture>
+    <img alt="Jawfish" src="./jawfish.png" height="200" style="margin-bottom: 20px;">
+  </picture>
 
-Small CLI for installing and managing reusable agentics: skills, agents, and prompts.
+  <p>
+    A minimal CLI for syncing and scoping AI agent skills, agents, and prompts
+    across tools, devices, and projects.
+  </p>
+</div>
 
-## Install
+## What Is Jawfish?
 
-From this checkout:
+Jawfish is a small package manager for reusable agentics:
+
+1. Keep skills, prompts, and agents in one content library.
+2. Install them globally or into a project.
+3. Update them when upstream changes.
+
+## Quick Start
+
+Install:
 
 ```sh
-bun install
-bun link
+bun install --global github:devdogfish/agentics-cli
 ```
 
-Verify:
-
-```sh
-agentics --version
-agentics --help
-```
-
-## Config
-
-Config lives at:
-
-```sh
-~/.agentics/config.json
-```
-
-Codex-only macOS config:
+Configure:
 
 ```json
 {
   "allowedTools": ["codex"],
   "defaultTool": "codex",
-  "contentLibrary": "/Users/devdogfish/.agentics/library"
+  "contentLibrary": "git@github.com:you/agentics.git"
 }
 ```
 
-Agentics installed globally for Codex go under:
+Save it at `~/.jawfish/config.json`.
+
+Add a skill:
+
+```sh
+jawfish add handoff
+```
+
+Install everything from the manifest:
+
+```sh
+jawfish install
+```
+
+Update later:
+
+```sh
+jawfish update
+```
+
+## How It Works
+
+Jawfish reads from one content library and writes tool-native files into the
+current project or your global tool config.
+
+Project installs are tracked in `jawfish.json`. Global installs are tracked in
+`~/.jawfish/jawfish.json`.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `jawfish add <name>` | Install from your library |
+| `jawfish add <source>` | Import from a URL or local file |
+| `jawfish install` | Reinstall everything in the manifest |
+| `jawfish update [name]` | Pull upstream changes |
+| `jawfish remove <name>` | Remove a managed install |
+
+Add `--global` to target your global tool config instead of the current
+project.
+
+Jawfish currently supports `codex`, `claude-code`, and `hermes`.
+
+Project installs go into `.codex/`, `.claude/`, or `.hermes/`. Global Codex
+installs go into:
 
 ```sh
 ~/.codex/skills
@@ -44,54 +87,10 @@ Agentics installed globally for Codex go under:
 ~/.codex/prompts
 ```
 
-Project installs go under the current repo's `.codex/` folder.
-
-## Usage
-
-Add from a catalog entry:
+## Develop
 
 ```sh
-agentics add handoff
-```
-
-Import from a URL or local path:
-
-```sh
-agentics add https://raw.githubusercontent.com/mattpocock/skills/main/skills/productivity/handoff/SKILL.md
-agentics add ./path/to/SKILL.md
-```
-
-Install globally:
-
-```sh
-agentics add -g handoff
-```
-
-Reinstall manifest entries:
-
-```sh
-agentics install
-agentics install -g
-```
-
-Update upstream-backed agentics:
-
-```sh
-agentics update
-agentics update handoff
-agentics update -g handoff
-```
-
-Remove:
-
-```sh
-agentics remove handoff
-agentics remove -g handoff
-```
-
-## Development
-
-```sh
+bun install
 bun run typecheck
 bun run test
 ```

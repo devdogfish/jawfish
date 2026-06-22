@@ -1,12 +1,13 @@
 {
-  "name": "agentics-cli",
+  "name": "jawfish",
   "version": "0.1.0",
+  "description": "Minimal CLI for syncing and scoping AI agent skills, agents, and prompts across tools, devices, and projects.",
   "type": "module",
   "bin": {
-    "agentics": "./src/main.ts"
+    "jawfish": "./src/main.ts"
   },
   "scripts": {
-    "agentics": "node --experimental-strip-types src/main.ts",
+    "jawfish": "node --experimental-strip-types src/main.ts",
     "sandcastle": "npx tsx .sandcastle/main.mts",
     "test": "node --test --experimental-strip-types test/**/*.test.ts",
     "typecheck": "tsc --noEmit"

@@ -7,7 +7,7 @@ import { supportedTools } from "./tool-adapters.ts";
 
 export const defaultAllowedTools = supportedTools;
 
-export interface AgenticsConfig {
+export interface JawfishConfig {
   contentLibrary?: string;
   allowedTools: string[];
   defaultTool?: string;
@@ -18,34 +18,38 @@ interface LoadConfigOptions {
   promptForDefaultTool?: (allowedTools: string[]) => Promise<string>;
 }
 
-export function agenticsHome(env: NodeJS.ProcessEnv = process.env): string {
-  return env.AGENTICS_HOME ?? join(homedir(), ".agentics");
+export function jawfishHome(env: NodeJS.ProcessEnv = process.env): string {
+  return env.JAWFISH_HOME ?? join(homedir(), ".jawfish");
 }
 
-export function configPath(home = agenticsHome()): string {
+export function configPath(home = jawfishHome()): string {
   return join(home, "config.json");
 }
 
 export async function loadConfig(
   options: LoadConfigOptions = {},
-): Promise<AgenticsConfig> {
+): Promise<JawfishConfig> {
   const env = options.env ?? process.env;
-  const home = agenticsHome(env);
+  const home = jawfishHome(env);
   const filePath = configPath(home);
   const existing = await readConfig(filePath);
-  const config: AgenticsConfig = {
+  const config: JawfishConfig = {
     ...existing,
     allowedTools: existing.allowedTools ?? [...defaultAllowedTools],
   };
   let changed = existing.allowedTools === undefined;
 
-  if (config.contentLibrary === undefined && env.AGENTICS_CONTENT_LIBRARY) {
-    config.contentLibrary = env.AGENTICS_CONTENT_LIBRARY;
+  if (config.contentLibrary === undefined && env.JAWFISH_CONTENT_LIBRARY) {
+    config.contentLibrary = env.JAWFISH_CONTENT_LIBRARY;
     changed = true;
   }
 
   if (config.defaultTool === undefined) {
-    config.defaultTool = await chooseDefaultTool(config.allowedTools, options, env);
+    config.defaultTool = await chooseDefaultTool(
+      config.allowedTools,
+      options,
+      env,
+    );
     changed = true;
   }
 
@@ -75,7 +79,7 @@ async function chooseDefaultTool(
   options: LoadConfigOptions,
   env: NodeJS.ProcessEnv,
 ): Promise<string> {
-  const envDefault = env.AGENTICS_DEFAULT_TOOL;
+  const envDefault = env.JAWFISH_DEFAULT_TOOL;
 
   if (envDefault !== undefined) {
     if (!allowedTools.includes(envDefault)) {
@@ -88,9 +92,9 @@ async function chooseDefaultTool(
   return (options.promptForDefaultTool ?? promptForTool)(allowedTools);
 }
 
-async function readConfig(path: string): Promise<Partial<AgenticsConfig>> {
+async function readConfig(path: string): Promise<Partial<JawfishConfig>> {
   try {
-    return JSON.parse(await readFile(path, "utf8")) as Partial<AgenticsConfig>;
+    return JSON.parse(await readFile(path, "utf8")) as Partial<JawfishConfig>;
   } catch (error) {
     if (errorHasCode(error, "ENOENT")) {
       return {};
@@ -100,7 +104,7 @@ async function readConfig(path: string): Promise<Partial<AgenticsConfig>> {
   }
 }
 
-async function writeConfig(path: string, config: AgenticsConfig): Promise<void> {
+async function writeConfig(path: string, config: JawfishConfig): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify(config, null, 2)}\n`);
 }
