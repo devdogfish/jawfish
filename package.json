@@ -3,6 +3,12 @@
   "version": "0.1.0",
   "description": "Minimal CLI for syncing and scoping AI agent skills, agents, and prompts across tools, devices, and projects.",
   "type": "module",
+  "files": [
+    "src",
+    "jawfish-logo-dark.png",
+    "jawfish-logo-light.png",
+    "jawfish.png"
+  ],
   "bin": {
     "jawfish": "./src/main.ts"
   },

@@ -1,12 +1,9 @@
 <div align="center">
   <picture>
-    <img alt="Jawfish" src="./jawfish.png" height="200" style="margin-bottom: 20px;">
+    <source media="(prefers-color-scheme: dark)" srcset="./jawfish-logo-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="./jawfish-logo-light.png">
+    <img alt="Jawfish - A minimal package manager for your AI skills." src="./jawfish-logo-light.png" height="320" style="margin-bottom: 20px;">
   </picture>
-
-  <p>
-    A minimal CLI for syncing and scoping AI agent skills, agents, and prompts
-    across tools, devices, and projects.
-  </p>
 </div>
 
 ## What Is Jawfish?
@@ -22,7 +19,7 @@ Jawfish is a small package manager for reusable agentics:
 Install:
 
 ```sh
-bun install --global github:devdogfish/agentics-cli
+bun install --global jawfish
 ```
 
 Configure:
@@ -65,13 +62,13 @@ Project installs are tracked in `jawfish.json`. Global installs are tracked in
 
 ## Commands
 
-| Command | What it does |
-| --- | --- |
-| `jawfish add <name>` | Install from your library |
-| `jawfish add <source>` | Import from a URL or local file |
-| `jawfish install` | Reinstall everything in the manifest |
-| `jawfish update [name]` | Pull upstream changes |
-| `jawfish remove <name>` | Remove a managed install |
+| Command                 | What it does                         |
+| ----------------------- | ------------------------------------ |
+| `jawfish add <name>`    | Install from your library            |
+| `jawfish add <source>`  | Import from a URL or local file      |
+| `jawfish install`       | Reinstall everything in the manifest |
+| `jawfish update [name]` | Pull upstream changes                |
+| `jawfish remove <name>` | Remove a managed install             |
 
 Add `--global` to target your global tool config instead of the current
 project.
