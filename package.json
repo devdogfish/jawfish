@@ -5,7 +5,7 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/devdogfish/agentics-cli.git"
+    "url": "git+https://github.com/devdogfish/jawfish.git"
   },
   "files": [
     "dist",
