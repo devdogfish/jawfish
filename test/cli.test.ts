@@ -230,6 +230,10 @@ function toolRoot(
       return join(scopeRoot(context, scope), ".claude");
     case "hermes":
       return join(scopeRoot(context, scope), ".hermes");
+    case "openclaw":
+      return scope === "project"
+        ? context.projectDir
+        : join(context.homeDir, ".openclaw");
     case "opencode":
       return scope === "project"
         ? join(context.projectDir, ".opencode")
@@ -365,6 +369,7 @@ describe("jawfish CLI", () => {
       "codex",
       "claude-code",
       "hermes",
+      "openclaw",
       "opencode",
       "pi",
     ] as const) {
@@ -468,7 +473,7 @@ describe("jawfish CLI", () => {
     assert.match(result.stderr, /Unsupported tool: unknown/);
     assert.match(
       result.stderr,
-      /Supported tools: codex, claude-code, hermes, opencode, pi/,
+      /Supported tools: codex, claude-code, hermes, openclaw, opencode, pi/,
     );
   });
 
@@ -544,6 +549,40 @@ describe("jawfish CLI", () => {
         /ENOENT/,
       );
     }
+  });
+
+  test("rejects non-skill packages for openclaw", async () => {
+    const context = await setup();
+    const libraryDir = join(context.rootDir, "content-library");
+
+    await createGitRepository(libraryDir);
+    await mkdir(join(libraryDir, "prompts", "review"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(libraryDir, "index.json"),
+      JSON.stringify(
+        {
+          review: {
+            description: "Review prompt",
+            path: "prompts/review",
+            type: "prompt",
+          },
+        },
+        null,
+        2,
+      ),
+    );
+    await writeFile(
+      join(libraryDir, "prompts", "review", "review.md"),
+      "# Review\n",
+    );
+    await writeJawfishConfig(context, libraryDir, "openclaw", ["openclaw"]);
+
+    const result = await runJawfish(context, ["add", "review"]);
+
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stderr, /OpenClaw supports only skill packages/);
   });
 
   test("installs and removes project manifest jawfish", async () => {

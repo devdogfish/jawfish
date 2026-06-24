@@ -77,11 +77,11 @@ Project installs are tracked in `jawfish.json`. Global installs are tracked in
 Add `--global` to target your global tool config instead of the current
 project.
 
-Jawfish currently supports `codex`, `claude-code`, `hermes`, `opencode`, and
-`pi`.
+Jawfish currently supports `codex`, `claude-code`, `hermes`, `openclaw`,
+`opencode`, and `pi`.
 
-Project installs go into `.codex/`, `.claude/`, `.hermes/`, `.opencode/`, or
-`.pi/`.
+Project installs go into `.codex/`, `.claude/`, `.hermes/`, `skills/`,
+`.opencode/`, or `.pi/`.
 
 Global installs go into:
 
@@ -90,6 +90,7 @@ Global installs go into:
 | `codex`       | `~/.codex`             |
 | `claude-code` | `~/.claude`            |
 | `hermes`      | `~/.hermes`            |
+| `openclaw`    | `~/.openclaw`          |
 | `opencode`    | `~/.config/opencode`   |
 | `pi`          | `~/.pi/agent`          |
 

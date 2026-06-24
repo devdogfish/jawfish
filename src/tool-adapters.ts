@@ -4,6 +4,7 @@ export const supportedTools = [
   "codex",
   "claude-code",
   "hermes",
+  "openclaw",
   "opencode",
   "pi",
 ] as const;
@@ -51,6 +52,18 @@ const adapters = {
       kind: "directory",
       path: join(scopeRoot(scope, paths), ".hermes", typeFolder(type), name),
     }),
+  },
+  openclaw: {
+    destination: (name, type, scope, paths) => {
+      if (type !== "skill") {
+        throw new Error("OpenClaw supports only skill packages");
+      }
+
+      return {
+        kind: "directory",
+        path: join(openclawRoot(scope, paths), "skills", name),
+      };
+    },
   },
   opencode: {
     destination: (name, type, scope, paths) => {
@@ -151,6 +164,12 @@ function scopeRoot(scope: InstallScope, paths: ToolPaths): string {
 
 function codexRoot(scope: InstallScope, paths: ToolPaths): string {
   return scope === "project" ? join(paths.projectDir, ".codex") : paths.codexHome;
+}
+
+function openclawRoot(scope: InstallScope, paths: ToolPaths): string {
+  return scope === "project"
+    ? paths.projectDir
+    : join(paths.homeDir, ".openclaw");
 }
 
 function opencodeRoot(scope: InstallScope, paths: ToolPaths): string {
