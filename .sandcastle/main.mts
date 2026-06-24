@@ -65,7 +65,7 @@ const dockerSandbox = docker({
 
 // Hooks run inside the sandbox before the agent starts each iteration.
 // First copy Codex auth from the read-only host mount into CODEX_HOME.
-// npm install then ensures Linux-native dependencies inside Docker.
+// bun install then ensures Linux-native dependencies inside Docker.
 const hooks = {
   sandbox: {
     onSandboxReady: [
@@ -77,7 +77,7 @@ const hooks = {
           `if [ -f "${sandboxCodexMount}/config.toml" ]; then cp "${sandboxCodexMount}/config.toml" "${sandboxCodexHome}/config.toml"; fi`,
         ].join(" && "),
       },
-      { command: "npm install" },
+      { command: "bun install --frozen-lockfile" },
     ],
   },
 };

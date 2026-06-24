@@ -1,8 +1,8 @@
 <div align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./jawfish-logo-dark.png">
-    <source media="(prefers-color-scheme: light)" srcset="./jawfish-logo-light.png">
-    <img alt="Jawfish - A minimal package manager for your AI skills." src="./jawfish-logo-light.png" height="320" style="margin-bottom: 20px;">
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/jawfish-logo-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="./assets/jawfish-logo-light.png">
+    <img alt="Jawfish - A minimal package manager for your AI skills." src="./assets/jawfish-logo-light.png" height="320" style="margin-bottom: 20px;">
   </picture>
 </div>
 

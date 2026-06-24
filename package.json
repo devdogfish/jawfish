@@ -1,6 +1,6 @@
 {
   "name": "jawfish",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Minimal CLI for syncing and scoping AI agent skills, agents, and prompts across tools, devices, and projects.",
   "type": "module",
   "repository": {
@@ -9,8 +9,8 @@
   },
   "files": [
     "dist",
-    "jawfish-logo-dark.png",
-    "jawfish-logo-light.png"
+    "assets/jawfish-logo-dark.png",
+    "assets/jawfish-logo-light.png"
   ],
   "bin": {
     "jawfish": "dist/main.js"
@@ -27,11 +27,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ai-hero/sandcastle": "^0.10.0",
     "@clack/prompts": "^1.6.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@ai-hero/sandcastle": "^0.10.0",
     "@standard-schema/spec": "^1.1.0",
     "@types/node": "^26.0.0",
     "typescript": "^6.0.3"

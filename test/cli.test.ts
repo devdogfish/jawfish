@@ -908,6 +908,46 @@ describe("jawfish CLI", () => {
     assert.equal(localHead.stdout, remoteHead.stdout);
   });
 
+  test("imports into a local git library without a push destination", async () => {
+    const context = await setup();
+    const libraryDir = join(context.rootDir, "content-library");
+    const sourceDir = join(context.rootDir, "focus");
+
+    await createGitRepository(libraryDir);
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(join(sourceDir, "SKILL.md"), "# Focus\n");
+    await writeJawfishConfig(context, libraryDir);
+
+    const result = await runJawfish(context, ["add", sourceDir]);
+
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.equal(result.stderr, "");
+    assert.equal(
+      await readFile(
+        join(context.projectDir, ".codex", "skills", "focus", "SKILL.md"),
+        "utf8",
+      ),
+      "# Focus\n",
+    );
+    assert.deepEqual(
+      JSON.parse(
+        await readFile(join(context.projectDir, "jawfish.json"), "utf8"),
+      ),
+      { jawfish: { focus: { tool: "codex" } } },
+    );
+    assert.deepEqual(
+      JSON.parse(await readFile(join(libraryDir, "index.json"), "utf8")),
+      {
+        focus: {
+          description: "",
+          path: "skills/focus",
+          type: "skill",
+          upstream: sourceDir,
+        },
+      },
+    );
+  });
+
   test("imports a URL file parent package, pushes the library, and installs it", async () => {
     const context = await setup();
     const libraryDir = join(context.rootDir, "content-library");

@@ -12,7 +12,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import {
   basename,
   dirname,
@@ -24,23 +24,31 @@ import {
 } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  assertSupportedTool,
+  assertSupportedConfiguredTool,
+  configPath,
+  defaultSupportedTools,
+  deprecatedLibraryPath,
+  jawfishHome,
+  loadConfig,
+  managedLibraryPath,
+  manifestPath,
+  saveConfig,
+  toolPaths,
+  type JawfishConfig,
+} from "./config.ts";
+import {
   destinationSpec,
-  supportedTools,
   typeFolder,
   type AgenticType,
   type DestinationSpec,
   type InstallScope,
-  type ToolPaths,
 } from "./tool-adapters.ts";
 
-const version = "0.1.1";
+const version = "0.1.2";
 const catalogFile = "catalog.json";
 const indexCatalogFile = "index.json";
-const projectManifestFile = "jawfish.json";
 const managedMarkerFile = ".jawfish-managed.json";
 const libraryIgnoreEntries = ["config.json", "jawfish.json"];
-const defaultTools = supportedTools;
 const agenticTypes = [
   "skill",
   "agent",
@@ -52,11 +60,6 @@ interface CommandSpec {
   summary: string;
   usage: string;
   options: string[];
-}
-
-interface Config {
-  contentLibrary?: string;
-  defaultTool?: string;
 }
 
 interface Catalog {
@@ -299,7 +302,7 @@ async function addCommand(args: ParsedArgs): Promise<number> {
     return 1;
   }
 
-  const config = await loadConfig();
+  const config = await loadConfig({ promptForMissingDefaultTool: false });
   const libraryDir = await resolveContentLibrary(config);
   const catalog = await readCatalog(libraryDir);
   const scope = getScope(args);
@@ -323,7 +326,7 @@ async function addCommand(args: ParsedArgs): Promise<number> {
 }
 
 async function installCommand(args: ParsedArgs): Promise<number> {
-  const config = await loadConfig();
+  const config = await loadConfig({ promptForMissingDefaultTool: false });
   const libraryDir = await resolveContentLibrary(config);
   await syncLibrary(libraryDir);
   const catalog = await readCatalog(libraryDir);
@@ -356,7 +359,7 @@ async function importSkillsCommand(args: ParsedArgs): Promise<number> {
 
   assertSupportedConfiguredTool(provider, "provider");
 
-  const config = await loadConfig();
+  const config = await loadConfig({ promptForMissingDefaultTool: false });
   const libraryDir = await resolveContentLibrary(config);
   const catalog = await readCatalog(libraryDir);
   const sourceRoot = globalSkillRoot(provider);
@@ -413,7 +416,7 @@ async function removeCommand(args: ParsedArgs): Promise<number> {
     return 1;
   }
 
-  const config = await loadConfig();
+  const config = await loadConfig({ promptForMissingDefaultTool: false });
   const libraryDir = await resolveContentLibrary(config);
   const catalog = await readCatalog(libraryDir);
   const scope = getScope(args);
@@ -441,7 +444,7 @@ async function removeCommand(args: ParsedArgs): Promise<number> {
 }
 
 async function updateCommand(args: ParsedArgs): Promise<number> {
-  const config = await loadConfig();
+  const config = await loadConfig({ promptForMissingDefaultTool: false });
   const libraryDir = await resolveContentLibrary(config);
   const catalog = await readCatalog(libraryDir);
   const name = args.positionals[0];
@@ -496,7 +499,7 @@ async function installOne(
   catalog: Catalog,
   name: string,
   scope: InstallScope,
-  config: Config,
+  config: JawfishConfig,
 ): Promise<string> {
   const tool = await resolveTool(config);
   await materialize(libraryDir, catalog, name, scope, tool);
@@ -1168,7 +1171,7 @@ async function reinstallInScopeIfPresent(
   catalog: Catalog,
   name: string,
   scope: InstallScope,
-  _config: Config,
+  _config: JawfishConfig,
 ): Promise<void> {
   const manifest = await readManifest(scope);
   const entry = manifest.jawfish[name];
@@ -1178,73 +1181,24 @@ async function reinstallInScopeIfPresent(
   }
 }
 
-async function resolveTool(config: Config): Promise<string> {
+async function resolveTool(config: JawfishConfig): Promise<string> {
   if (config.defaultTool !== undefined) {
     assertSupportedConfiguredTool(config.defaultTool, "config defaultTool");
     return config.defaultTool;
   }
 
-  const selected = await promptForTool(defaultTools);
+  const selected = await promptForTool(defaultSupportedTools);
   if (selected === "") {
     throw new Error("No default tool selected");
   }
 
   assertSupportedConfiguredTool(selected, "selected default tool");
   config.defaultTool = selected;
-  await writeConfig(config);
+  await saveConfig(config);
   return selected;
 }
 
-function assertSupportedConfiguredTool(tool: string, source: string): void {
-  try {
-    assertSupportedTool(tool);
-  } catch {
-    throw new Error(
-      `Unsupported ${source}: ${tool}. Supported tools: ${supportedTools.join(", ")}`,
-    );
-  }
-}
-
-type RawConfig = Partial<Config> & { allowedTools?: unknown };
-
-async function loadConfig(): Promise<Config> {
-  const path = await existingConfigPath();
-  const parsed =
-    path === undefined
-      ? {}
-      : (JSON.parse(await readFile(path, "utf8")) as RawConfig);
-  const config: Config = {
-    contentLibrary:
-      parsed.contentLibrary ?? process.env.JAWFISH_CONTENT_LIBRARY,
-    defaultTool: parsed.defaultTool,
-  };
-  let changed =
-    path === undefined ||
-    parsed.allowedTools !== undefined ||
-    (parsed.contentLibrary === undefined &&
-      process.env.JAWFISH_CONTENT_LIBRARY !== undefined);
-
-  const envDefaultTool = process.env.JAWFISH_DEFAULT_TOOL;
-  if (config.defaultTool === undefined && envDefaultTool !== undefined) {
-    assertSupportedConfiguredTool(envDefaultTool, "JAWFISH_DEFAULT_TOOL");
-    config.defaultTool = envDefaultTool;
-    changed = true;
-  } else if (config.defaultTool !== undefined) {
-    assertSupportedConfiguredTool(config.defaultTool, "config defaultTool");
-  }
-
-  if (changed) {
-    await writeConfig(config);
-  }
-
-  return config;
-}
-
-async function writeConfig(config: Config): Promise<void> {
-  await writeJson(configPath(), config);
-}
-
-async function resolveContentLibrary(config: Config): Promise<string> {
+async function resolveContentLibrary(config: JawfishConfig): Promise<string> {
   if (config.contentLibrary === undefined || config.contentLibrary === "") {
     throw new Error(
       `Missing contentLibrary in ${configPath()}\n` +
@@ -1493,66 +1447,6 @@ function inferPackageName(packagePath: string): string {
   return basename(packagePath).replace(/\.[^.]+$/, "");
 }
 
-function configPath(): string {
-  return join(jawfishHome(), "config.json");
-}
-
-function legacyConfigPath(): string {
-  return join(xdgConfigHome(), "jawfish", "config.json");
-}
-
-async function existingConfigPath(): Promise<string | undefined> {
-  if (await exists(configPath())) {
-    return configPath();
-  }
-
-  if (await exists(legacyConfigPath())) {
-    return legacyConfigPath();
-  }
-
-  return undefined;
-}
-
-function managedLibraryPath(): string {
-  return jawfishHome();
-}
-
-function deprecatedLibraryPath(): string {
-  return join(jawfishHome(), "library");
-}
-
-function manifestPath(scope: InstallScope): string {
-  if (scope === "project") {
-    return join(process.cwd(), projectManifestFile);
-  }
-
-  return join(jawfishHome(), projectManifestFile);
-}
-
-function codexHome(): string {
-  return process.env.CODEX_HOME ?? join(homeDir(), ".codex");
-}
-
-function opencodeConfigDir(): string {
-  return (
-    process.env.OPENCODE_CONFIG_DIR ?? join(homeDir(), ".config", "opencode")
-  );
-}
-
-function piAgentDir(): string {
-  return join(homeDir(), ".pi", "agent");
-}
-
-function toolPaths(): ToolPaths {
-  return {
-    codexHome: codexHome(),
-    homeDir: homeDir(),
-    opencodeConfigDir: opencodeConfigDir(),
-    piAgentDir: piAgentDir(),
-    projectDir: process.cwd(),
-  };
-}
-
 function globalSkillRoot(tool: string): string {
   return dirname(
     destinationSpec(
@@ -1567,18 +1461,6 @@ function globalSkillRoot(tool: string): string {
 
 function getScope(args: ParsedArgs): InstallScope {
   return args.global ? "global" : "project";
-}
-
-function homeDir(): string {
-  return process.env.HOME ?? homedir();
-}
-
-function jawfishHome(): string {
-  return process.env.JAWFISH_HOME ?? join(homeDir(), ".jawfish");
-}
-
-function xdgConfigHome(): string {
-  return process.env.XDG_CONFIG_HOME ?? join(homeDir(), ".config");
 }
 
 async function isBareRepository(path: string): Promise<boolean> {
@@ -1640,13 +1522,19 @@ function parseArgs(args: string[]): ParsedArgs {
 }
 
 function printRootHelp(): void {
+  const commandWidth =
+    Math.max(...commandNames.map((command) => command.length)) + 2;
+
   console.log(`jawfish ${version}
 
 Usage: jawfish <command> [options]
 
 Commands:
 ${commandNames
-  .map((command) => `  ${command.padEnd(10)}${commandSpecs[command].summary}`)
+  .map(
+    (command) =>
+      `  ${command.padEnd(commandWidth)}${commandSpecs[command].summary}`,
+  )
   .join("\n")}
 
 Options:
@@ -1719,12 +1607,27 @@ async function commitAndPush(
   }
 
   await runCommand("git", ["commit", "-m", message], libraryDir);
+  if (!(await hasPushDestination(libraryDir))) {
+    return { ok: true };
+  }
+
   const push = await runCommand("git", ["push"], libraryDir, false);
   if (push.exitCode !== 0) {
     return { ok: false, error: push.stderr || push.stdout };
   }
 
   return { ok: true };
+}
+
+async function hasPushDestination(libraryDir: string): Promise<boolean> {
+  const result = await runCommand(
+    "git",
+    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    libraryDir,
+    false,
+  );
+
+  return result.exitCode === 0 && result.stdout.trim() !== "";
 }
 
 async function pushLibraryChanges(
