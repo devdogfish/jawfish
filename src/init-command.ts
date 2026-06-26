@@ -525,9 +525,10 @@ async function importSelectedProviders(
   }
 
   const selectedProviders = await prompt(defaultSupportedTools);
+  assertSelectedImportProvidersSupported(selectedProviders);
+
   const pathOptions = { cwd: context.cwd, env: context.env };
   for (const provider of selectedProviders) {
-    assertSupportedConfiguredTool(provider, "selected import provider");
     const catalog = await readCatalog(agenticsRepoDir);
     const result = await importProviderSkills(
       agenticsRepoDir,
@@ -554,6 +555,8 @@ async function installSelectedGlobalStarters(
     console.log("No global starter agentics selected");
     return;
   }
+
+  assertSelectedAgenticsAvailable(selected, inspection);
 
   const tool = configuredDefaultTool(config, context);
   const catalog = catalogFromInspection(inspection);
@@ -612,6 +615,8 @@ async function runProjectSetup(
     return;
   }
 
+  assertSelectedAgenticsAvailable(selected, inspection);
+
   const tool = configuredDefaultTool(config, context);
   const catalog = catalogFromInspection(inspection);
   for (const name of selected) {
@@ -630,6 +635,28 @@ async function selectProjectAgentics(
 ): Promise<string[]> {
   const prompt = context.prompts.selectProjectAgentics ?? promptForProjectAgentics;
   return await prompt(inspection, manifest);
+}
+
+function assertSelectedAgenticsAvailable(
+  selected: string[],
+  inspection: AgenticsRepoInspection,
+): void {
+  const available = new Set(inspection.usableNames);
+  const missing = selected.filter((name) => !available.has(name));
+  if (missing.length === 0) {
+    return;
+  }
+
+  throw new Error(
+    `Selected agentic is not available: ${missing.join(", ")}. ` +
+      `Available: ${formatNames(inspection.usableNames)}`,
+  );
+}
+
+function assertSelectedImportProvidersSupported(selectedProviders: string[]): void {
+  for (const provider of selectedProviders) {
+    assertSupportedConfiguredTool(provider, "selected import provider");
+  }
 }
 
 async function promptForProjectAgentics(

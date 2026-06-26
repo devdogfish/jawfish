@@ -2481,6 +2481,38 @@ describe("jawfish CLI", () => {
     });
   });
 
+  test("interactive init exits clearly for a missing linked repo path", async () => {
+    const context = await setup();
+    const agenticsRepoDir = join(context.rootDir, "missing-agentics");
+
+    const prompts: InitCommandPrompts = {
+      inputAgenticsRepo: async () => agenticsRepoDir,
+      selectAgenticsRepoMode: async () => "link",
+      selectDefaultTool: async () => "codex",
+      selectProjectAgentics: async () => [],
+    };
+
+    await assert.rejects(
+      captureConsole(() =>
+        initCommand(initArgs(), {
+          cwd: context.projectDir,
+          env: {
+            HOME: context.homeDir,
+            JAWFISH_HOME: context.homeDir,
+          },
+          prompts,
+        }),
+      ),
+      /Agentics repo path not found/,
+    );
+    await assert.rejects(readFile(configPath(context.homeDir), "utf8"), {
+      code: "ENOENT",
+    });
+    await assert.rejects(readFile(join(context.homeDir, "jawfish.json"), "utf8"), {
+      code: "ENOENT",
+    });
+  });
+
   test("interactive init installs selected global starter entries", async () => {
     const context = await setup();
     const agenticsRepoDir = join(context.rootDir, "starter-agentics");
@@ -2522,6 +2554,107 @@ describe("jawfish CLI", () => {
         "utf8",
       ),
       "# Focus\n\nUse focused execution.\n",
+    );
+  });
+
+  test("interactive init rejects invalid starter selections before installs", async () => {
+    const context = await setup();
+    const agenticsRepoDir = join(context.rootDir, "starter-agentics");
+
+    await createGitRepository(agenticsRepoDir);
+    await writeIndexedFocusSkill(agenticsRepoDir);
+
+    const prompts: InitCommandPrompts = {
+      inputAgenticsRepo: async () => agenticsRepoDir,
+      selectAgenticsRepoMode: async () => "link",
+      selectDefaultTool: async () => "codex",
+      selectGlobalStarterAgentics: async () => ["focus", "missing"],
+      selectImportProviders: async () => [],
+      selectProjectAgentics: async () => [],
+    };
+
+    await assert.rejects(
+      captureConsole(() =>
+        initCommand(initArgs(), {
+          cwd: context.projectDir,
+          env: {
+            HOME: context.homeDir,
+            JAWFISH_HOME: context.homeDir,
+          },
+          prompts,
+        }),
+      ),
+      /Selected agentic is not available: missing/,
+    );
+    await assertJsonFile(join(context.homeDir, "jawfish.json"), { jawfish: {} });
+    await assert.rejects(
+      readFile(
+        join(context.homeDir, ".codex", "skills", "focus", "SKILL.md"),
+        "utf8",
+      ),
+      { code: "ENOENT" },
+    );
+    await assert.rejects(readFile(configPath(context.homeDir), "utf8"), {
+      code: "ENOENT",
+    });
+  });
+
+  test("interactive init project cancellation preserves existing manifest", async () => {
+    const context = await setup();
+    const agenticsRepoDir = join(context.rootDir, "agentics");
+
+    await createGitRepository(agenticsRepoDir);
+    await writeIndexedFocusSkill(agenticsRepoDir);
+    await writeFile(
+      configPath(context.homeDir),
+      `${JSON.stringify({
+        agenticsRepo: agenticsRepoDir,
+        defaultTool: "codex",
+      })}\n`,
+    );
+    await writeFile(
+      join(context.projectDir, "jawfish.json"),
+      JSON.stringify({ jawfish: { existing: { tool: "codex" } } }, null, 2),
+    );
+
+    const prompts: InitCommandPrompts = {
+      inputAgenticsRepo: async () => {
+        throw new Error("unexpected repo path prompt");
+      },
+      selectAgenticsRepoMode: async () => {
+        throw new Error("unexpected repo mode prompt");
+      },
+      selectDefaultTool: async () => {
+        throw new Error("unexpected default tool prompt");
+      },
+      selectExistingMachineInitAction: async () => "project",
+      selectProjectAgentics: async () => {
+        throw new Error("Project setup cancelled");
+      },
+    };
+
+    await assert.rejects(
+      captureConsole(() =>
+        initCommand(initArgs(), {
+          cwd: context.projectDir,
+          env: {
+            HOME: context.homeDir,
+            JAWFISH_HOME: context.homeDir,
+          },
+          prompts,
+        }),
+      ),
+      /Project setup cancelled/,
+    );
+    await assertJsonFile(join(context.projectDir, "jawfish.json"), {
+      jawfish: { existing: { tool: "codex" } },
+    });
+    await assert.rejects(
+      readFile(
+        join(context.projectDir, ".codex", "skills", "focus", "SKILL.md"),
+        "utf8",
+      ),
+      { code: "ENOENT" },
     );
   });
 
@@ -2579,6 +2712,49 @@ describe("jawfish CLI", () => {
     });
     await assertJsonFile(join(context.homeDir, "jawfish.json"), {
       jawfish: { focus: { tool: "codex" } },
+    });
+  });
+
+  test("interactive init rejects invalid import providers before imports", async () => {
+    const context = await setup();
+    const agenticsRepoDir = join(context.rootDir, "empty-agentics");
+
+    await createGitRepository(agenticsRepoDir);
+    await mkdir(join(context.homeDir, ".codex", "skills", "focus"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(context.homeDir, ".codex", "skills", "focus", "SKILL.md"),
+      "# Imported Focus\n",
+    );
+
+    const prompts: InitCommandPrompts = {
+      inputAgenticsRepo: async () => agenticsRepoDir,
+      selectAgenticsRepoMode: async () => "link",
+      selectDefaultTool: async () => "codex",
+      selectImportProviders: async () => ["codex", "unknown"],
+      selectProjectAgentics: async () => [],
+    };
+
+    await assert.rejects(
+      captureConsole(() =>
+        initCommand(initArgs(), {
+          cwd: context.projectDir,
+          env: {
+            HOME: context.homeDir,
+            JAWFISH_HOME: context.homeDir,
+          },
+          prompts,
+        }),
+      ),
+      /Unsupported selected import provider: unknown/,
+    );
+    await assertJsonFile(join(context.homeDir, "jawfish.json"), { jawfish: {} });
+    await assert.rejects(readFile(join(agenticsRepoDir, "index.json"), "utf8"), {
+      code: "ENOENT",
+    });
+    await assert.rejects(readFile(configPath(context.homeDir), "utf8"), {
+      code: "ENOENT",
     });
   });
 
@@ -2694,6 +2870,45 @@ describe("jawfish CLI", () => {
     );
     await assert.rejects(
       readFile(join(context.homeDir, "jawfish.json"), "utf8"),
+      { code: "ENOENT" },
+    );
+  });
+
+  test("init -y repeated runs do not install or import catalog entries", async () => {
+    const context = await setup();
+    const agenticsRepoDir = join(context.rootDir, "agentics");
+
+    await createGitRepository(agenticsRepoDir);
+    await writeIndexedFocusSkill(agenticsRepoDir);
+
+    const env = {
+      JAWFISH_AGENTICS_REPO: agenticsRepoDir,
+      JAWFISH_DEFAULT_TOOL: "codex",
+    };
+
+    const first = await runJawfish(context, ["init", "-y"], { env });
+    const second = await runJawfish(context, ["init", "-y"], { env });
+    const third = await runJawfish(context, ["init", "-y"], { env });
+
+    assert.equal(first.exitCode, 0, first.stderr);
+    assert.equal(second.exitCode, 0, second.stderr);
+    assert.equal(third.exitCode, 0, third.stderr);
+    await assertJsonFile(join(context.homeDir, "jawfish.json"), { jawfish: {} });
+    await assertJsonFile(join(context.projectDir, "jawfish.json"), {
+      jawfish: {},
+    });
+    await assert.rejects(
+      readFile(
+        join(context.projectDir, ".codex", "skills", "focus", "SKILL.md"),
+        "utf8",
+      ),
+      { code: "ENOENT" },
+    );
+    await assert.rejects(
+      readFile(
+        join(context.homeDir, ".codex", "skills", "focus", "SKILL.md"),
+        "utf8",
+      ),
       { code: "ENOENT" },
     );
   });
