@@ -177,7 +177,7 @@ export function assertSupportedConfiguredTool(
 export function managedLibraryPath(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  return jawfishHome(env);
+  return join(jawfishHome(env), "content-library");
 }
 
 export function deprecatedLibraryPath(

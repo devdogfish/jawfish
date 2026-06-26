@@ -28,7 +28,6 @@ import {
   configPath,
   defaultSupportedTools,
   deprecatedLibraryPath,
-  jawfishHome,
   loadConfig,
   managedLibraryPath,
   manifestPath,
@@ -139,6 +138,11 @@ interface ImportSkillsSkip {
   reason: string;
 }
 
+interface ImportPackageResult {
+  imported: boolean;
+  name: string;
+}
+
 const commandSpecs = {
   add: {
     description:
@@ -150,6 +154,12 @@ const commandSpecs = {
       "--name <name>   Override imported package name",
       "-h, --help      Show help",
     ],
+  },
+  init: {
+    description: "Initialize jawfish config and content library.",
+    summary: "Initialize jawfish",
+    usage: "jawfish init [content-library]",
+    options: ["-h, --help      Show help"],
   },
   install: {
     description:
@@ -272,6 +282,8 @@ export async function run(argv: string[]): Promise<number> {
     switch (command) {
       case "add":
         return await addCommand(parsed);
+      case "init":
+        return await initCommand(parsed);
       case "i":
         return parsed.positionals.length > 0
           ? await addCommand(parsed)
@@ -314,14 +326,45 @@ async function addCommand(args: ParsedArgs): Promise<number> {
     return 0;
   }
 
+  if (!(await isImportSource(source))) {
+    throw new Error(`Unknown agentic: ${source}`);
+  }
+
   const imported = await importPackage(libraryDir, catalog, source, args.name);
-  await writeCatalog(libraryDir, catalog);
-  if (!(await pushLibraryChanges(libraryDir, `add ${imported}`))) {
+  if (imported.imported) {
+    await writeCatalog(libraryDir, catalog);
+    if (!(await pushLibraryChanges(libraryDir, `add ${imported.name}`))) {
+      return 1;
+    }
+  }
+
+  await installOne(libraryDir, catalog, imported.name, scope, config);
+  console.log(`Added ${imported.name} to ${scope}`);
+  return 0;
+}
+
+async function initCommand(args: ParsedArgs): Promise<number> {
+  if (
+    args.force ||
+    args.global ||
+    args.name !== undefined ||
+    args.positionals.length > 1
+  ) {
+    console.error("Usage: jawfish init [content-library]");
     return 1;
   }
 
-  await installOne(libraryDir, catalog, imported, scope, config);
-  console.log(`Added ${imported} to ${scope}`);
+  const config = await loadConfig();
+  const source = args.positionals[0];
+  if (source !== undefined) {
+    config.contentLibrary = source;
+    await saveConfig(config);
+  }
+
+  const libraryDir = await resolveContentLibrary(config);
+  await resolveTool(config);
+  console.log(`Initialized jawfish at ${configPath()}`);
+  console.log(`Content library: ${libraryDir}`);
   return 0;
 }
 
@@ -783,11 +826,16 @@ async function importPackage(
   catalog: Catalog,
   source: string,
   nameOverride: string | undefined,
-): Promise<string> {
+): Promise<ImportPackageResult> {
   const acquired = await acquireSource(source);
   const name = nameOverride ?? acquired.inferredName;
 
   if (catalogHasAgentic(catalog, name)) {
+    const existing = catalog.jawfish[name];
+    if (existing !== undefined && isSameUpstream(existing.upstream, source)) {
+      return { imported: false, name };
+    }
+
     throw new Error(`Agentic already exists in catalog: ${name}`);
   }
 
@@ -806,7 +854,23 @@ async function importPackage(
     upstream: source,
   };
 
-  return name;
+  return { imported: true, name };
+}
+
+function isSameUpstream(existing: string | undefined, source: string): boolean {
+  if (existing === undefined) {
+    return false;
+  }
+
+  if (isUrl(existing) && isUrl(source)) {
+    return normalizeSourceUrl(existing) === normalizeSourceUrl(source);
+  }
+
+  if (!isUrl(existing) && !isUrl(source)) {
+    return resolve(process.cwd(), existing) === resolve(process.cwd(), source);
+  }
+
+  return existing === source;
 }
 
 async function planSkillImport(
@@ -927,6 +991,14 @@ async function acquireSource(source: string): Promise<AcquiredSource> {
   return isUrl(source) ? acquireUrlSource(source) : acquireLocalSource(source);
 }
 
+async function isImportSource(source: string): Promise<boolean> {
+  if (isUrl(source)) {
+    return true;
+  }
+
+  return exists(resolve(process.cwd(), source));
+}
+
 async function acquireLocalSource(source: string): Promise<AcquiredSource> {
   const localPath = resolve(process.cwd(), source);
   const sourceStat = await stat(localPath);
@@ -940,19 +1012,20 @@ async function acquireLocalSource(source: string): Promise<AcquiredSource> {
 
 async function acquireUrlSource(source: string): Promise<AcquiredSource> {
   const tempDir = await mkdtemp(join(tmpdir(), "jawfish-source-"));
-  const url = new URL(source);
+  const normalizedSource = normalizeSourceUrl(source);
+  const url = new URL(normalizedSource);
   const fileName = basename(url.pathname) || "agentic.md";
-  const sourceResponse = await fetchUrl(source);
+  const sourceResponse = await fetchUrl(normalizedSource);
 
   if (isDirectoryListing(sourceResponse)) {
-    await downloadUrlDirectory(source, tempDir, sourceResponse.links);
+    await downloadUrlDirectory(normalizedSource, tempDir, sourceResponse.links);
     return {
       inferredName: inferUrlPackageName(url.pathname),
       packagePath: tempDir,
     };
   }
 
-  const parentUrl = new URL(".", source).toString();
+  const parentUrl = new URL(".", normalizedSource).toString();
   const parentResponse = await fetchUrl(parentUrl, false);
   const filePath = join(tempDir, fileName);
 
@@ -987,7 +1060,7 @@ async function fetchUrl(
 ): Promise<UrlResponse | undefined> {
   const response = await fetch(source);
   if (!response.ok) {
-    if (!throwOnMissing && response.status === 404) {
+    if (!throwOnMissing) {
       return undefined;
     }
 
@@ -1003,6 +1076,21 @@ async function fetchUrl(
     contentType,
     links: parseHtmlLinks(body.toString("utf8")),
   };
+}
+
+export function normalizeSourceUrl(source: string): string {
+  const url = new URL(source);
+  if (url.hostname !== "github.com") {
+    return source;
+  }
+
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (parts.length < 5 || parts[2] !== "blob") {
+    return source;
+  }
+
+  const [owner, repo, , branch, ...path] = parts;
+  return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path.join("/")}`;
 }
 
 function isDirectoryListing(response: UrlResponse): boolean {
@@ -1200,10 +1288,11 @@ async function resolveTool(config: JawfishConfig): Promise<string> {
 
 async function resolveContentLibrary(config: JawfishConfig): Promise<string> {
   if (config.contentLibrary === undefined || config.contentLibrary === "") {
-    throw new Error(
-      `Missing contentLibrary in ${configPath()}\n` +
-        "Set it to your jawfish content library path or clone URL.",
-    );
+    const libraryDir = managedLibraryPath();
+    await initializeLocalManagedLibrary(libraryDir);
+    config.contentLibrary = libraryDir;
+    await saveConfig(config);
+    return libraryDir;
   }
 
   const configured = isAbsolute(config.contentLibrary)
@@ -1224,21 +1313,33 @@ async function resolveContentLibrary(config: JawfishConfig): Promise<string> {
 
   const libraryDir = managedLibraryPath();
   if (await exists(join(libraryDir, ".git"))) {
+    await configureManagedLibraryUser(libraryDir);
     await ensureLibraryIgnore(libraryDir);
     return libraryDir;
   }
 
-  await mkdir(jawfishHome(), { recursive: true });
   await initializeManagedLibrary(config.contentLibrary, libraryDir);
   await ensureLibraryIgnore(libraryDir);
   return libraryDir;
+}
+
+async function initializeLocalManagedLibrary(libraryDir: string): Promise<void> {
+  await mkdir(libraryDir, { recursive: true });
+  if (!(await exists(join(libraryDir, ".git")))) {
+    await runCommand("git", ["init"], libraryDir);
+  }
+
+  await configureManagedLibraryUser(libraryDir);
+  await ensureLibraryIgnore(libraryDir);
 }
 
 async function initializeManagedLibrary(
   source: string,
   libraryDir: string,
 ): Promise<void> {
+  await mkdir(libraryDir, { recursive: true });
   await runCommand("git", ["init"], libraryDir);
+  await configureManagedLibraryUser(libraryDir);
   await runCommand("git", ["remote", "add", "origin", source], libraryDir);
   await runCommand("git", ["fetch", "origin"], libraryDir);
 
@@ -1253,6 +1354,32 @@ async function initializeManagedLibrary(
     ["branch", "--set-upstream-to", `origin/${branch}`, branch],
     libraryDir,
   );
+}
+
+async function configureManagedLibraryUser(libraryDir: string): Promise<void> {
+  const email = await runCommand(
+    "git",
+    ["config", "--get", "user.email"],
+    libraryDir,
+    false,
+  );
+  if (email.exitCode !== 0 || email.stdout.trim() === "") {
+    await runCommand(
+      "git",
+      ["config", "user.email", "jawfish@example.invalid"],
+      libraryDir,
+    );
+  }
+
+  const name = await runCommand(
+    "git",
+    ["config", "--get", "user.name"],
+    libraryDir,
+    false,
+  );
+  if (name.exitCode !== 0 || name.stdout.trim() === "") {
+    await runCommand("git", ["config", "user.name", "Jawfish"], libraryDir);
+  }
 }
 
 async function remoteDefaultBranch(libraryDir: string): Promise<string> {

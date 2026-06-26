@@ -25,6 +25,7 @@ import {
   loadConfig,
   type JawfishConfig,
 } from "../src/config.ts";
+import { normalizeSourceUrl } from "../src/main.ts";
 
 const contexts: CliTestContext[] = [];
 
@@ -1005,6 +1006,69 @@ describe("jawfish CLI", () => {
     }
   });
 
+  test("imports a URL file when the parent URL cannot be listed", async () => {
+    const context = await setup();
+    const libraryDir = join(context.rootDir, "content-library");
+    const remoteDir = join(context.rootDir, "content-library.git");
+
+    await createGitRepository(libraryDir);
+    await createBareRemote(remoteDir);
+    await git(libraryDir, ["remote", "add", "origin", remoteDir]);
+    await git(libraryDir, ["push", "-u", "origin", "HEAD"]);
+    await writeJawfishConfig(context, libraryDir);
+
+    const server = createServer((request, response) => {
+      if (request.url === "/upstream-focus/SKILL.md") {
+        response.writeHead(200, { "content-type": "text/markdown" });
+        response.end("# Focus\n");
+        return;
+      }
+
+      response.writeHead(400, { "content-type": "text/plain" });
+      response.end("directory listing unavailable\n");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("Expected TCP server address");
+    }
+    const sourceUrl = `http://127.0.0.1:${address.port}/upstream-focus/SKILL.md`;
+
+    try {
+      const result = await runJawfish(context, ["add", sourceUrl]);
+
+      assert.equal(result.exitCode, 0, result.stderr);
+      assert.equal(
+        await readFile(
+          join(
+            context.projectDir,
+            ".codex",
+            "skills",
+            "upstream-focus",
+            "SKILL.md",
+          ),
+          "utf8",
+        ),
+        "# Focus\n",
+      );
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) =>
+          error === undefined ? resolve() : reject(error),
+        );
+      });
+    }
+  });
+
+  test("normalizes GitHub blob file URLs to raw URLs", () => {
+    assert.equal(
+      normalizeSourceUrl(
+        "https://github.com/mattpocock/skills/blob/main/skills/productivity/handoff/SKILL.md",
+      ),
+      "https://raw.githubusercontent.com/mattpocock/skills/main/skills/productivity/handoff/SKILL.md",
+    );
+  });
+
   test("imports a URL directory package with agent type inference", async () => {
     const context = await setup();
     const libraryDir = join(context.rootDir, "content-library");
@@ -1047,6 +1111,49 @@ describe("jawfish CLI", () => {
             path: "agents/review-agent",
             type: "agent",
             upstream: sourceUrl,
+          },
+        },
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("installs an already imported URL source into another scope", async () => {
+    const context = await setup();
+    const sourceDir = join(context.rootDir, "repeat-skill");
+
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(join(sourceDir, "SKILL.md"), "# Repeat\n");
+
+    const server = await serveStaticDirectory(context.rootDir);
+    const sourceUrl = `${server.url}/repeat-skill`;
+    try {
+      const projectResult = await runJawfish(context, ["add", sourceUrl], {
+        env: { JAWFISH_DEFAULT_TOOL: "codex" },
+      });
+      assert.equal(projectResult.exitCode, 0, projectResult.stderr);
+
+      const globalResult = await runJawfish(context, ["add", "-g", sourceUrl], {
+        env: { JAWFISH_DEFAULT_TOOL: "codex" },
+      });
+
+      assert.equal(globalResult.exitCode, 0, globalResult.stderr);
+      assert.match(globalResult.stdout, /Added repeat-skill to global/);
+      assert.equal(
+        await readFile(
+          join(context.homeDir, ".codex", "skills", "repeat-skill", "SKILL.md"),
+          "utf8",
+        ),
+        "# Repeat\n",
+      );
+      assert.deepEqual(
+        JSON.parse(await readFile(join(context.homeDir, "jawfish.json"), "utf8")),
+        {
+          jawfish: {
+            "repeat-skill": {
+              tool: "codex",
+            },
           },
         },
       );
@@ -1459,6 +1566,7 @@ describe("jawfish CLI", () => {
 
     for (const command of [
       "add",
+      "init",
       "import-skills",
       "install",
       "i",
@@ -1471,6 +1579,96 @@ describe("jawfish CLI", () => {
       assert.equal(result.exitCode, 0);
       assert.match(result.stdout, new RegExp(`Usage: jawfish ${command}`));
     }
+  });
+
+  test("adds a URL source with no configured content library", async () => {
+    const context = await setup();
+    const sourceDir = join(context.rootDir, "quick-skill");
+
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(join(sourceDir, "SKILL.md"), "# Quick\n");
+
+    const server = await serveStaticDirectory(context.rootDir);
+    try {
+      const result = await runJawfish(
+        context,
+        ["add", `${server.url}/quick-skill`],
+        {
+          env: { JAWFISH_DEFAULT_TOOL: "codex" },
+        },
+      );
+
+      assert.equal(result.exitCode, 0, result.stderr);
+      assert.match(result.stdout, /Added quick-skill to project/);
+      assert.equal(
+        await readFile(
+          join(
+            context.projectDir,
+            ".codex",
+            "skills",
+            "quick-skill",
+            "SKILL.md",
+          ),
+          "utf8",
+        ),
+        "# Quick\n",
+      );
+      assert.deepEqual(
+        JSON.parse(await readFile(configPath(context.homeDir), "utf8")),
+        {
+          contentLibrary: join(context.homeDir, "content-library"),
+          defaultTool: "codex",
+        },
+      );
+      assert.deepEqual(
+        JSON.parse(
+          await readFile(
+            join(context.homeDir, "content-library", "index.json"),
+            "utf8",
+          ),
+        ),
+        {
+          "quick-skill": {
+            description: "",
+            path: "skills/quick-skill",
+            type: "skill",
+            upstream: `${server.url}/quick-skill`,
+          },
+        },
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("initializes config and a local content library", async () => {
+    const context = await setup();
+
+    const result = await runJawfish(context, ["init"], {
+      env: { JAWFISH_DEFAULT_TOOL: "codex" },
+    });
+
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.match(result.stdout, /Initialized jawfish/);
+    assert.deepEqual(
+      JSON.parse(await readFile(configPath(context.homeDir), "utf8")),
+      {
+        contentLibrary: join(context.homeDir, "content-library"),
+        defaultTool: "codex",
+      },
+    );
+    await stat(join(context.homeDir, "content-library", ".git"));
+  });
+
+  test("prints a clear error for an unknown catalog name in an empty local library", async () => {
+    const context = await setup();
+
+    const result = await runJawfish(context, ["add", "missing"], {
+      env: { JAWFISH_DEFAULT_TOOL: "codex" },
+    });
+
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stderr, /Unknown agentic: missing/);
   });
 
   test("prints version with long and short flags", async () => {
@@ -1633,14 +1831,15 @@ describe("jawfish CLI", () => {
     const reusedClone = await runJawfish(context, ["add", "demo-skill"]);
     assert.equal(reusedClone.exitCode, 0, reusedClone.stderr);
 
-    const cloneHead = await git(context.homeDir, ["rev-parse", "HEAD"]);
+    const cloneDir = join(context.homeDir, "content-library");
+    const cloneHead = await git(cloneDir, ["rev-parse", "HEAD"]);
     assert.match(cloneHead.stdout.trim(), /^[a-f0-9]{40}$/);
     assert.match(
-      await readFile(join(context.homeDir, ".gitignore"), "utf8"),
+      await readFile(join(cloneDir, ".gitignore"), "utf8"),
       /config\.json/,
     );
     assert.match(
-      await readFile(join(context.homeDir, ".gitignore"), "utf8"),
+      await readFile(join(cloneDir, ".gitignore"), "utf8"),
       /jawfish\.json/,
     );
   });
