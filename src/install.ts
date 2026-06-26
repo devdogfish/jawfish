@@ -48,8 +48,16 @@ interface PackageFile {
   relativePath: string;
 }
 
-export async function readManifest(scope: InstallScope): Promise<Manifest> {
-  const path = manifestPath(scope);
+interface PathOptions {
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+}
+
+export async function readManifest(
+  scope: InstallScope,
+  options: PathOptions = {},
+): Promise<Manifest> {
+  const path = manifestPath(scope, options.env, options.cwd);
   if (!(await exists(path))) {
     return { jawfish: {} };
   }
@@ -61,8 +69,9 @@ export async function readManifest(scope: InstallScope): Promise<Manifest> {
 export async function writeManifest(
   scope: InstallScope,
   manifest: Manifest,
+  options: PathOptions = {},
 ): Promise<void> {
-  await writeJson(manifestPath(scope), manifest);
+  await writeJson(manifestPath(scope, options.env, options.cwd), manifest);
 }
 
 export async function installManifestEntry(
@@ -71,12 +80,13 @@ export async function installManifestEntry(
   name: string,
   scope: InstallScope,
   tool: string,
+  options: PathOptions = {},
 ): Promise<void> {
-  await materialize(agenticsRepoDir, catalog, name, scope, tool);
+  await materialize(agenticsRepoDir, catalog, name, scope, tool, options);
 
-  const manifest = await readManifest(scope);
+  const manifest = await readManifest(scope, options);
   manifest.jawfish[name] = { tool };
-  await writeManifest(scope, manifest);
+  await writeManifest(scope, manifest, options);
 }
 
 export async function materialize(
@@ -85,6 +95,7 @@ export async function materialize(
   name: string,
   scope: InstallScope,
   tool: string,
+  options: PathOptions = {},
 ): Promise<void> {
   const entry = catalog.jawfish[name];
   if (entry === undefined) {
@@ -92,7 +103,7 @@ export async function materialize(
   }
 
   const sourcePath = resolveInside(agenticsRepoDir, entry.path);
-  await materializePackage(sourcePath, name, entry.type, scope, tool);
+  await materializePackage(sourcePath, name, entry.type, scope, tool, options);
 }
 
 export async function removeMaterialized(
@@ -100,8 +111,15 @@ export async function removeMaterialized(
   type: AgenticType,
   scope: InstallScope,
   tool: string,
+  options: PathOptions = {},
 ): Promise<void> {
-  const destination = destinationSpec(name, type, scope, tool, toolPaths());
+  const destination = destinationSpec(
+    name,
+    type,
+    scope,
+    tool,
+    toolPaths(options.env, options.cwd),
+  );
   if (destination.kind === "file") {
     await removeManagedNativeFile(destination.path);
     return;
@@ -116,8 +134,15 @@ export async function assertCanMaterializePackage(
   type: AgenticType,
   scope: InstallScope,
   tool: string,
+  options: PathOptions = {},
 ): Promise<void> {
-  const destination = destinationSpec(name, type, scope, tool, toolPaths());
+  const destination = destinationSpec(
+    name,
+    type,
+    scope,
+    tool,
+    toolPaths(options.env, options.cwd),
+  );
   const sourceFiles = await packageFiles(sourcePath);
 
   if (destination.kind === "file") {
@@ -154,8 +179,15 @@ async function materializePackage(
   type: AgenticType,
   scope: InstallScope,
   tool: string,
+  options: PathOptions,
 ): Promise<void> {
-  const destination = destinationSpec(name, type, scope, tool, toolPaths());
+  const destination = destinationSpec(
+    name,
+    type,
+    scope,
+    tool,
+    toolPaths(options.env, options.cwd),
+  );
   const sourceFiles = await packageFiles(sourcePath);
 
   if (destination.kind === "file") {

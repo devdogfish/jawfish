@@ -31,13 +31,14 @@ jawfish add https://github.com/mattpocock/skills/blob/main/skills/productivity/h
 Jawfish creates `~/.jawfish/config.json` and a local git repo at
 `~/.jawfish/agentics` on first use.
 
-Initialize first, if you want to create the base machine setup:
+Initialize first, if you want an interactive machine setup:
 
 ```sh
-jawfish init -y
+jawfish init
 ```
 
-Run it again in a project to create an empty project manifest:
+Use `-y` for the noninteractive defaults, or run it again in a project to
+create an empty project manifest:
 
 ```sh
 jawfish init -y
@@ -105,10 +106,16 @@ and `--raw` for JSON output.
 Jawfish pulls remote-backed repos before install/list and commits/pushes repo
 changes after add/import/update when an upstream exists.
 
-`init` accepts `-y` or `--yes` for the noninteractive flow. With no machine
-config, it creates `~/.jawfish/config.json`, the configured/default agentics
-repo, repo ignore rules, and an empty global manifest. With machine config
-already present, it creates the project `jawfish.json` if missing.
+`init` runs an interactive first-run machine setup when config is missing. It
+asks for the default tool, creates the local agentics repo by default or links
+an existing local path/git URL, inspects what Jawfish can see, writes repo ignore
+rules, and creates an empty global manifest. It does not create GitHub
+repositories or ask branch questions.
+
+`init -y` or `init --yes` uses noninteractive defaults. With no machine config,
+it creates `~/.jawfish/config.json`, the configured/default agentics repo, repo
+ignore rules, and an empty global manifest. With machine config already present,
+it creates the project `jawfish.json` if missing.
 
 ## Configuration
 

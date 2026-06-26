@@ -149,7 +149,7 @@ const commandSpecs = {
     ],
   },
   init: {
-    description: "Initialize jawfish config and agentics repo.",
+    description: "Initialize jawfish config and agentics repo interactively.",
     summary: "Initialize jawfish",
     usage: "jawfish init [options]",
     options: [
