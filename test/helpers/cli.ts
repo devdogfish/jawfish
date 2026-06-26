@@ -107,10 +107,10 @@ async function runCommand(
   const child = spawn(command, args, {
     cwd: options.cwd,
     env: { ...process.env, ...options.env },
-    stdio: ["pipe", "pipe", "pipe"],
+    stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
   });
 
-  child.stdin.end(options.input ?? "");
+  child.stdin?.end(options.input);
 
   const [stdout, stderr, exitCode] = await Promise.all([
     readStream(child.stdout),
@@ -130,7 +130,11 @@ async function waitForExit(
   });
 }
 
-async function readStream(stream: NodeJS.ReadableStream): Promise<string> {
+async function readStream(stream: NodeJS.ReadableStream | null): Promise<string> {
+  if (stream === null) {
+    return "";
+  }
+
   let output = "";
 
   for await (const chunk of stream) {
