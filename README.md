@@ -107,16 +107,18 @@ Jawfish pulls remote-backed repos before install/list and commits/pushes repo
 changes after add/import/update when an upstream exists.
 
 `init` runs an interactive first-run machine setup when config is missing. It
-asks for the default tool, creates the local agentics repo by default or links
-an existing local path/git URL, inspects what Jawfish can see, writes repo ignore
-rules, creates the global manifest, offers registered repo entries as global
-starter installs, and can import existing global provider skills. If machine
-setup already exists, it offers project setup or machine reinitialize. The
-reinitialize menu shows the current config and can change the default tool,
-change the agentics repo link, install global starter entries, or import
-existing global provider skills. If the linked repo is empty, import is offered
-before starter selection so imported skills can be installed in the same run. It
-does not create GitHub repositories, wipe repo contents, or ask branch questions.
+asks for the default tool, lets you choose the local agentics repo path, and can
+attach a remote git URL. Plain GitHub repo URLs are accepted and cloned into the
+chosen local repo. It inspects what Jawfish can see, writes repo ignore rules,
+creates the global manifest, offers registered repo entries as global starter
+installs, and can import existing global provider skills. If machine setup
+already exists, it offers project setup or machine reinitialize. The
+reinitialize menu shows the current local repo path and remote, and can change
+the default tool, change the agentics repo link, install global starter entries,
+or import existing global provider skills. If the linked repo is empty, import
+is offered before starter selection so imported skills can be installed in the
+same run. It does not create GitHub repositories, wipe repo contents, or ask
+branch questions.
 
 `init -y` or `init --yes` uses noninteractive defaults. With no machine config,
 it creates `~/.jawfish/config.json`, the configured/default agentics repo, repo

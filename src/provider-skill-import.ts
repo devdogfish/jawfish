@@ -13,7 +13,11 @@ import {
 } from "./install.ts";
 import { pushAgenticsRepoChanges } from "./agentics-repo.ts";
 import { toolPaths } from "./config.ts";
-import { destinationSpec, typeFolder } from "./tool-adapters.ts";
+import {
+  destinationSpec,
+  type InstallScope,
+  typeFolder,
+} from "./tool-adapters.ts";
 
 interface PathOptions {
   cwd?: string;
@@ -24,6 +28,18 @@ export interface DiscoveredSkill {
   name: string;
   path: string;
   upstream?: string;
+}
+
+export interface ImportableSkillCandidate extends DiscoveredSkill {
+  id: string;
+  provider: string;
+  scope: InstallScope;
+}
+
+export interface ImportableSkillDiscovery {
+  candidates: ImportableSkillCandidate[];
+  conflicts: ImportSkillsSkip[];
+  skipped: ImportSkillsSkip[];
 }
 
 export interface ImportSkillsPlan {
@@ -80,6 +96,55 @@ export async function planSkillImport(
   return plan;
 }
 
+export async function discoverImportableSkills(
+  providers: readonly string[],
+  scopes: readonly InstallScope[],
+  catalog: Catalog,
+  options: PathOptions = {},
+): Promise<ImportableSkillDiscovery> {
+  const discovery: ImportableSkillDiscovery = {
+    candidates: [],
+    conflicts: [],
+    skipped: [],
+  };
+
+  for (const provider of providers) {
+    for (const scope of scopes) {
+      const sourceRoot = skillRoot(provider, scope, options);
+      const plan = await planSkillImport(sourceRoot, catalog);
+      discovery.candidates.push(
+        ...plan.imported.map((skill) => ({
+          ...skill,
+          id: importableSkillId(provider, scope, skill.name),
+          provider,
+          scope,
+        })),
+      );
+      discovery.conflicts.push(
+        ...plan.conflicts.map((name) => ({
+          name: `${provider}/${scope}/${name}`,
+          reason: "catalog conflict",
+        })),
+      );
+      discovery.skipped.push(
+        ...plan.skipped.map((skip) => ({
+          name: `${provider}/${scope}/${skip.name}`,
+          reason: skip.reason,
+        })),
+      );
+    }
+  }
+
+  discovery.candidates.sort((left, right) =>
+    left.provider.localeCompare(right.provider) ||
+    left.scope.localeCompare(right.scope) ||
+    left.name.localeCompare(right.name),
+  );
+  discovery.conflicts.sort((left, right) => left.name.localeCompare(right.name));
+  discovery.skipped.sort((left, right) => left.name.localeCompare(right.name));
+  return discovery;
+}
+
 export function printImportSkillsPlan(
   provider: string,
   sourceRoot: string,
@@ -100,8 +165,9 @@ export async function applySkillImport(
   provider: string,
   skills: DiscoveredSkill[],
   options: PathOptions = {},
+  manifestScope: InstallScope = "global",
 ): Promise<void> {
-  const manifest = await readManifest("global", options);
+  const manifest = await readManifest(manifestScope, options);
 
   for (const skill of skills) {
     const packagePath = join(typeFolder("skill"), skill.name);
@@ -122,7 +188,27 @@ export async function applySkillImport(
     await adoptGlobalSkill(skill, provider);
   }
 
-  await writeManifest("global", manifest, options);
+  await writeManifest(manifestScope, manifest, options);
+}
+
+export async function applySelectedSkillImports(
+  agenticsRepoDir: string,
+  catalog: Catalog,
+  skills: ImportableSkillCandidate[],
+  options: PathOptions = {},
+): Promise<void> {
+  assertUniqueImportNames(skills);
+
+  for (const skill of skills) {
+    await applySkillImport(
+      agenticsRepoDir,
+      catalog,
+      skill.provider,
+      [skill],
+      options,
+      skill.scope,
+    );
+  }
 }
 
 export async function importProviderSkills(
@@ -155,15 +241,53 @@ export function globalSkillRoot(
   tool: string,
   options: PathOptions = {},
 ): string {
+  return skillRoot(tool, "global", options);
+}
+
+export function projectSkillRoot(
+  tool: string,
+  options: PathOptions = {},
+): string {
+  return skillRoot(tool, "project", options);
+}
+
+export function importableSkillId(
+  provider: string,
+  scope: InstallScope,
+  name: string,
+): string {
+  return `${provider}:${scope}:${name}`;
+}
+
+function skillRoot(
+  tool: string,
+  scope: InstallScope,
+  options: PathOptions = {},
+): string {
   return dirname(
     destinationSpec(
       "__jawfish_import_probe__",
       "skill",
-      "global",
+      scope,
       tool,
       toolPaths(options.env, options.cwd),
     ).path,
   );
+}
+
+function assertUniqueImportNames(skills: ImportableSkillCandidate[]): void {
+  const counts = new Map<string, number>();
+  for (const skill of skills) {
+    counts.set(skill.name, (counts.get(skill.name) ?? 0) + 1);
+  }
+
+  const duplicates = [...counts.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([name]) => name)
+    .sort();
+  if (duplicates.length > 0) {
+    throw new Error(`Selected import skills contain duplicate names: ${duplicates.join(", ")}`);
+  }
 }
 
 function formatImportSkillSkips(skipped: ImportSkillsSkip[]): string {

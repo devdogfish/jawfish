@@ -1,0 +1,11 @@
+{
+  "files": [
+    "SKILL.md",
+    "mocking.md",
+    "refactoring.md",
+    "tests.md"
+  ],
+  "name": "tdd",
+  "tool": "codex",
+  "type": "skill"
+}

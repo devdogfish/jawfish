@@ -1722,6 +1722,11 @@ async function initializeManagedAgenticsRepo(
   await runCommand("git", ["fetch", "origin"], agenticsRepoDir);
 
   const branch = await remoteDefaultBranch(agenticsRepoDir);
+  if (branch === undefined) {
+    await runCommand("git", ["checkout", "-B", "main"], agenticsRepoDir);
+    return;
+  }
+
   await runCommand(
     "git",
     ["checkout", "-B", branch, `origin/${branch}`],
@@ -1734,7 +1739,9 @@ async function initializeManagedAgenticsRepo(
   );
 }
 
-async function remoteDefaultBranch(agenticsRepoDir: string): Promise<string> {
+async function remoteDefaultBranch(
+  agenticsRepoDir: string,
+): Promise<string | undefined> {
   const result = await runCommand(
     "git",
     ["ls-remote", "--symref", "origin", "HEAD"],
@@ -1742,7 +1749,7 @@ async function remoteDefaultBranch(agenticsRepoDir: string): Promise<string> {
   );
   const match = /^ref: refs\/heads\/([^\t]+)\tHEAD$/mu.exec(result.stdout);
   if (match === null) {
-    throw new Error("Could not determine agentics repo default branch");
+    return undefined;
   }
 
   return match[1];

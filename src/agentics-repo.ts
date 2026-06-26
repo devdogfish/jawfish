@@ -236,11 +236,25 @@ async function commitAndPush(
   }
 
   await runCommand("git", ["commit", "-m", message], agenticsRepoDir);
-  if (!(await hasPushDestination(agenticsRepoDir))) {
+  if (await hasPushDestination(agenticsRepoDir)) {
+    const push = await runCommand("git", ["push"], agenticsRepoDir, false);
+    if (push.exitCode !== 0) {
+      return { ok: false, error: push.stderr || push.stdout };
+    }
+
     return { ok: true };
   }
 
-  const push = await runCommand("git", ["push"], agenticsRepoDir, false);
+  if (!(await hasOriginRemote(agenticsRepoDir))) {
+    return { ok: true };
+  }
+
+  const push = await runCommand(
+    "git",
+    ["push", "-u", "origin", "HEAD"],
+    agenticsRepoDir,
+    false,
+  );
   if (push.exitCode !== 0) {
     return { ok: false, error: push.stderr || push.stdout };
   }
@@ -252,6 +266,17 @@ async function hasPushDestination(agenticsRepoDir: string): Promise<boolean> {
   const result = await runCommand(
     "git",
     ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    agenticsRepoDir,
+    false,
+  );
+
+  return result.exitCode === 0 && result.stdout.trim() !== "";
+}
+
+async function hasOriginRemote(agenticsRepoDir: string): Promise<boolean> {
+  const result = await runCommand(
+    "git",
+    ["remote", "get-url", "origin"],
     agenticsRepoDir,
     false,
   );

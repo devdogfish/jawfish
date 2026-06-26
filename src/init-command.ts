@@ -5,9 +5,10 @@ import {
   configureAgenticsRepoGitUser,
   ensureAgenticsRepoIgnore,
   inspectAgenticsRepo,
+  pushAgenticsRepoChanges,
   type AgenticsRepoInspection,
 } from "./agentics-repo.ts";
-import { readCatalog, type Catalog } from "./catalog.ts";
+import { readCatalog, writeCatalog, type Catalog } from "./catalog.ts";
 import {
   assertSupportedConfiguredTool,
   configPath,
@@ -28,7 +29,12 @@ import {
   writeJson,
   type Manifest,
 } from "./install.ts";
-import { importProviderSkills } from "./provider-skill-import.ts";
+import {
+  applySelectedSkillImports,
+  discoverImportableSkills,
+  importProviderSkills,
+  type ImportableSkillCandidate,
+} from "./provider-skill-import.ts";
 import { runCommand } from "./process.ts";
 
 interface InitCommandArgs {
@@ -45,6 +51,7 @@ type AgenticsRepoMode = "link" | "local";
 type ExistingMachineInitAction = "project" | "reinitialize";
 type GitRepositoryState = "created" | "existing";
 type MachineReinitializeAction =
+  | "agentics"
   | "agentics-repo"
   | "default-tool"
   | "done"
@@ -53,6 +60,8 @@ type MachineReinitializeAction =
 
 export interface InitCommandPrompts {
   inputAgenticsRepo: () => Promise<string>;
+  inputAgenticsRepoLocalPath?: (defaultPath: string) => Promise<string>;
+  inputAgenticsRepoRemote?: () => Promise<string | undefined>;
   selectExistingMachineInitAction?: (
     hasProjectManifest: boolean,
   ) => Promise<ExistingMachineInitAction>;
@@ -62,8 +71,13 @@ export interface InitCommandPrompts {
     inspection: AgenticsRepoInspection,
     manifest: Manifest,
   ) => Promise<string[]>;
+  selectImportSkills?: (
+    candidates: ImportableSkillCandidate[],
+  ) => Promise<string[]>;
   selectImportProviders?: (supportedTools: readonly string[]) => Promise<string[]>;
-  selectMachineReinitializeAction?: () => Promise<MachineReinitializeAction>;
+  selectMachineReinitializeAction?: (
+    config: JawfishConfig,
+  ) => Promise<MachineReinitializeAction>;
   selectProjectAgentics?: (
     inspection: AgenticsRepoInspection,
     manifest: Manifest,
@@ -85,6 +99,12 @@ interface InitContext {
   cwd: string;
   env: NodeJS.ProcessEnv;
   prompts: InitCommandPrompts;
+}
+
+interface AgenticsRepoSelection {
+  createIfMissing: boolean;
+  localPath: string;
+  remoteSource?: string;
 }
 
 export async function initCommand(
@@ -111,7 +131,9 @@ export async function initCommand(
       ? await createMachineSetup(context)
       : await createInteractiveMachineSetup(context);
     console.log(`Initialized jawfish at ${configPath(jawfishHome(context.env))}`);
-    console.log(`Agentics repo: ${config.agenticsRepo}`);
+    if (config.agenticsRepo !== undefined && config.agenticsRepo !== "") {
+      await printAgenticsRepoLocation(config.agenticsRepo, context);
+    }
     if (args.yes) {
       await printAgenticsRepoInspection(config.agenticsRepo, context);
       return 0;
@@ -152,10 +174,13 @@ function initContext(options: InitCommandOptions): InitContext {
 
 const defaultInitPrompts: InitCommandPrompts = {
   inputAgenticsRepo: promptForAgenticsRepo,
+  inputAgenticsRepoLocalPath: promptForAgenticsRepoLocalPath,
+  inputAgenticsRepoRemote: promptForAgenticsRepoRemote,
   selectExistingMachineInitAction: promptForExistingMachineInitAction,
   selectAgenticsRepoMode: promptForAgenticsRepoMode,
   selectDefaultTool: promptForDefaultTool,
   selectGlobalStarterAgentics: promptForGlobalStarterAgentics,
+  selectImportSkills: promptForImportSkills,
   selectImportProviders: promptForImportProviders,
   selectMachineReinitializeAction: promptForMachineReinitializeAction,
 };
@@ -164,13 +189,15 @@ async function createMachineSetup(context: InitContext): Promise<JawfishConfig> 
   const defaultTool = context.env.JAWFISH_DEFAULT_TOOL ?? firstSupportedTool();
   assertSupportedConfiguredTool(defaultTool, "JAWFISH_DEFAULT_TOOL");
 
-  const agenticsRepo =
-    context.env.JAWFISH_AGENTICS_REPO ?? managedAgenticsRepoPath(context.env);
-  const config: JawfishConfig = { agenticsRepo, defaultTool };
+  const selection = await noninteractiveAgenticsRepoSelection(context);
+  const config: JawfishConfig = {
+    agenticsRepo: selection.localPath,
+    defaultTool,
+  };
 
-  await saveConfig(config, { env: context.env });
-  await initializeLocalAgenticsRepo(agenticsRepo, context);
+  await prepareAgenticsRepo(selection, context);
   await ensureGlobalManifest(context);
+  await saveConfig(config, { env: context.env });
   return config;
 }
 
@@ -181,10 +208,13 @@ async function createInteractiveMachineSetup(
   assertSupportedConfiguredTool(defaultTool, "selected default tool");
 
   const repoMode = await context.prompts.selectAgenticsRepoMode();
-  const agenticsRepo = await resolveAgenticsRepoSelection(repoMode, context);
+  const selection = await resolveAgenticsRepoSelection(repoMode, context);
 
-  const config: JawfishConfig = { agenticsRepo, defaultTool };
-  await prepareAgenticsRepo(agenticsRepo, repoMode, context);
+  const config: JawfishConfig = {
+    agenticsRepo: selection.localPath,
+    defaultTool,
+  };
+  await prepareAgenticsRepo(selection, context);
   await ensureGlobalManifest(context);
   await runMachineStarterSetup(config, context);
   await saveConfig(config, { env: context.env });
@@ -203,40 +233,101 @@ function firstSupportedTool(): string {
 async function resolveAgenticsRepoSelection(
   mode: AgenticsRepoMode,
   context: InitContext,
-): Promise<string> {
+): Promise<AgenticsRepoSelection> {
+  const defaultLocalPath = managedAgenticsRepoPath(context.env);
   if (mode === "local") {
-    return managedAgenticsRepoPath(context.env);
+    return {
+      createIfMissing: true,
+      localPath: await inputAgenticsRepoLocalPath(context, defaultLocalPath),
+      remoteSource: await inputAgenticsRepoRemote(context),
+    };
   }
 
-  return context.prompts.inputAgenticsRepo();
+  const selected = await context.prompts.inputAgenticsRepo();
+  if (looksLikeGitUrl(selected) || (await isBareRepository(selected))) {
+    return {
+      createIfMissing: true,
+      localPath: await inputAgenticsRepoLocalPath(context, defaultLocalPath),
+      remoteSource: selected,
+    };
+  }
+
+  return {
+    createIfMissing: false,
+    localPath: selected,
+    remoteSource: await inputAgenticsRepoRemote(context),
+  };
+}
+
+async function noninteractiveAgenticsRepoSelection(
+  context: InitContext,
+): Promise<AgenticsRepoSelection> {
+  const configured = context.env.JAWFISH_AGENTICS_REPO;
+  if (configured === undefined || configured === "") {
+    return {
+      createIfMissing: true,
+      localPath: managedAgenticsRepoPath(context.env),
+    };
+  }
+
+  if (looksLikeGitUrl(configured) || (await isBareRepository(configured))) {
+    return {
+      createIfMissing: true,
+      localPath: managedAgenticsRepoPath(context.env),
+      remoteSource: configured,
+    };
+  }
+
+  return { createIfMissing: true, localPath: configured };
+}
+
+async function inputAgenticsRepoLocalPath(
+  context: InitContext,
+  defaultPath: string,
+): Promise<string> {
+  const prompt = context.prompts.inputAgenticsRepoLocalPath;
+  if (prompt === undefined) {
+    return defaultPath;
+  }
+
+  const selected = await prompt(defaultPath);
+  return selected.trim() === "" ? defaultPath : selected.trim();
+}
+
+async function inputAgenticsRepoRemote(
+  context: InitContext,
+): Promise<string | undefined> {
+  const prompt = context.prompts.inputAgenticsRepoRemote;
+  if (prompt === undefined) {
+    return undefined;
+  }
+
+  const selected = await prompt();
+  if (selected === undefined || selected.trim() === "") {
+    return undefined;
+  }
+
+  return selected.trim();
 }
 
 async function prepareAgenticsRepo(
-  agenticsRepo: string,
-  mode: AgenticsRepoMode,
+  selection: AgenticsRepoSelection,
   context: InitContext,
 ): Promise<void> {
-  if (mode === "local") {
-    await initializeLocalAgenticsRepo(agenticsRepo, context);
+  if (selection.remoteSource === undefined) {
+    const linkedPath = resolveConfiguredPath(selection.localPath, context.cwd);
+    const linkedPathExists = await exists(linkedPath);
+    if (!linkedPathExists && !selection.createIfMissing) {
+      throw new Error(`Agentics repo path not found: ${selection.localPath}`);
+    }
+
+    await initializeLocalAgenticsRepo(selection.localPath, context);
     return;
   }
 
-  const linkedPath = resolveConfiguredPath(agenticsRepo, context.cwd);
-  const linkedPathExists = await exists(linkedPath);
-  if (linkedPathExists && !(await isBareRepository(linkedPath))) {
-    await initializeLocalAgenticsRepo(linkedPath, context);
-    return;
-  }
-
-  if (linkedPathExists || looksLikeGitUrl(agenticsRepo)) {
-    await initializeManagedAgenticsRepo(
-      agenticsRepo,
-      managedAgenticsRepoPath(context.env),
-    );
-    return;
-  }
-
-  throw new Error(`Agentics repo path not found: ${agenticsRepo}`);
+  const localPath = resolveConfiguredPath(selection.localPath, context.cwd);
+  await mkdir(localPath, { recursive: true });
+  await initializeManagedAgenticsRepo(selection.remoteSource, localPath);
 }
 
 async function initializeLocalAgenticsRepo(
@@ -253,16 +344,18 @@ async function initializeManagedAgenticsRepo(
   source: string,
   agenticsRepoDir: string,
 ): Promise<void> {
-  const gitRepositoryState = await ensureGitRepository(agenticsRepoDir);
-  if (gitRepositoryState === "existing") {
-    await runCommand("git", ["remote", "set-url", "origin", source], agenticsRepoDir);
-  } else {
-    await runCommand("git", ["remote", "add", "origin", source], agenticsRepoDir);
-  }
+  await ensureGitRepository(agenticsRepoDir);
+  await configureOriginRemote(source, agenticsRepoDir);
 
   await runCommand("git", ["fetch", "origin"], agenticsRepoDir);
 
   const branch = await remoteDefaultBranch(agenticsRepoDir);
+  if (branch === undefined) {
+    await runCommand("git", ["checkout", "-B", "main"], agenticsRepoDir);
+    await ensureAgenticsRepoIgnore(agenticsRepoDir);
+    return;
+  }
+
   await runCommand(
     "git",
     ["checkout", "-B", branch, `origin/${branch}`],
@@ -274,6 +367,18 @@ async function initializeManagedAgenticsRepo(
     agenticsRepoDir,
   );
   await ensureAgenticsRepoIgnore(agenticsRepoDir);
+}
+
+async function configureOriginRemote(
+  source: string,
+  agenticsRepoDir: string,
+): Promise<void> {
+  if ((await originRemote(agenticsRepoDir)) === undefined) {
+    await runCommand("git", ["remote", "add", "origin", source], agenticsRepoDir);
+    return;
+  }
+
+  await runCommand("git", ["remote", "set-url", "origin", source], agenticsRepoDir);
 }
 
 async function ensureGitRepository(
@@ -289,7 +394,9 @@ async function ensureGitRepository(
   return hadGitRepository ? "existing" : "created";
 }
 
-async function remoteDefaultBranch(agenticsRepoDir: string): Promise<string> {
+async function remoteDefaultBranch(
+  agenticsRepoDir: string,
+): Promise<string | undefined> {
   const result = await runCommand(
     "git",
     ["ls-remote", "--symref", "origin", "HEAD"],
@@ -297,7 +404,7 @@ async function remoteDefaultBranch(agenticsRepoDir: string): Promise<string> {
   );
   const match = /^ref: refs\/heads\/([^\t]+)\tHEAD$/mu.exec(result.stdout);
   if (match === null) {
-    throw new Error("Could not determine agentics repo default branch");
+    return undefined;
   }
 
   return match[1];
@@ -392,8 +499,8 @@ async function runMachineReinitialize(
 
   await ensureGlobalManifest(context);
   while (true) {
-    printMachineConfig(config, context);
-    const action = await selectMachineReinitializeAction(context);
+    await printMachineConfig(config, context);
+    const action = await selectMachineReinitializeAction(config, context);
 
     switch (action) {
       case "done":
@@ -404,29 +511,40 @@ async function runMachineReinitialize(
       case "agentics-repo":
         config = await reinitializeAgenticsRepo(config, context);
         break;
+      case "agentics":
+        await runImportAndStarterEdit(config, context);
+        break;
       case "global-starters":
-        await runGlobalStarterEdit(config, context);
+        await runImportAndStarterEdit(config, context);
         break;
       case "import-skills":
-        await runImportSkillsEdit(config, context);
+        await runImportAndStarterEdit(config, context);
         break;
     }
   }
 }
 
 async function selectMachineReinitializeAction(
+  config: JawfishConfig,
   context: InitContext,
 ): Promise<MachineReinitializeAction> {
   const prompt =
     context.prompts.selectMachineReinitializeAction ??
     promptForMachineReinitializeAction;
-  return await prompt();
+  return await prompt(config);
 }
 
-function printMachineConfig(config: JawfishConfig, context: InitContext): void {
+async function printMachineConfig(
+  config: JawfishConfig,
+  context: InitContext,
+): Promise<void> {
   console.log("Current machine config");
   console.log(`Default tool: ${config.defaultTool ?? "missing"}`);
-  console.log(`Agentics repo: ${config.agenticsRepo ?? "missing"}`);
+  if (config.agenticsRepo === undefined || config.agenticsRepo === "") {
+    console.log("Agentics repo local: missing");
+  } else {
+    await printAgenticsRepoLocation(config.agenticsRepo, context);
+  }
   console.log(`Config: ${configPath(jawfishHome(context.env))}`);
 }
 
@@ -448,21 +566,25 @@ async function reinitializeAgenticsRepo(
   context: InitContext,
 ): Promise<JawfishConfig> {
   const repoMode = await context.prompts.selectAgenticsRepoMode();
-  const agenticsRepo = await resolveAgenticsRepoSelection(repoMode, context);
+  const selection = await resolveAgenticsRepoSelection(repoMode, context);
 
-  await prepareAgenticsRepo(agenticsRepo, repoMode, context);
-  const nextConfig = { ...config, agenticsRepo };
+  await prepareAgenticsRepo(selection, context);
+  const nextConfig = { ...config, agenticsRepo: selection.localPath };
   await saveConfig(nextConfig, { env: context.env });
-  console.log(`Updated agentics repo: ${agenticsRepo}`);
-  await printAgenticsRepoInspection(agenticsRepo, context);
+  console.log(`Updated agentics repo local: ${selection.localPath}`);
+  if (selection.remoteSource !== undefined) {
+    console.log(`Updated agentics repo remote: ${selection.remoteSource}`);
+  }
+  await printAgenticsRepoInspection(selection.localPath, context);
   return nextConfig;
 }
 
-async function runGlobalStarterEdit(
+async function runImportAndStarterEdit(
   config: JawfishConfig,
   context: InitContext,
 ): Promise<void> {
   const agenticsRepoDir = await configuredAgenticsRepoDir(config, context);
+  await importSelectedSkills(agenticsRepoDir, context);
   const inspection = await inspectAgenticsRepo(agenticsRepoDir);
 
   printInspection(inspection);
@@ -479,15 +601,6 @@ async function runGlobalStarterEdit(
   );
 }
 
-async function runImportSkillsEdit(
-  config: JawfishConfig,
-  context: InitContext,
-): Promise<void> {
-  const agenticsRepoDir = await configuredAgenticsRepoDir(config, context);
-
-  await importSelectedProviders(agenticsRepoDir, context);
-}
-
 async function runMachineStarterSetup(
   config: JawfishConfig,
   context: InitContext,
@@ -499,7 +612,7 @@ async function runMachineStarterSetup(
 
   const shouldImportBeforeStarterSelection = inspection.usable.length === 0;
   if (shouldImportBeforeStarterSelection) {
-    await importSelectedProviders(agenticsRepoDir, context);
+    await importSelectedSkills(agenticsRepoDir, context);
     inspection = await inspectAgenticsRepo(agenticsRepoDir);
     if (inspection.usable.length > 0) {
       printInspection(inspection);
@@ -511,8 +624,58 @@ async function runMachineStarterSetup(
   }
 
   if (!shouldImportBeforeStarterSelection) {
-    await importSelectedProviders(agenticsRepoDir, context);
+    await importSelectedSkills(agenticsRepoDir, context);
   }
+}
+
+async function importSelectedSkills(
+  agenticsRepoDir: string,
+  context: InitContext,
+): Promise<void> {
+  const pathOptions = { cwd: context.cwd, env: context.env };
+  const catalog = await readCatalog(agenticsRepoDir);
+  const discovery = await discoverImportableSkills(
+    defaultSupportedTools,
+    ["global", "project"],
+    catalog,
+    pathOptions,
+  );
+
+  if (discovery.candidates.length === 0) {
+    console.log("No importable skills found");
+    return;
+  }
+
+  if (context.prompts.selectImportSkills === undefined) {
+    await importSelectedProviders(agenticsRepoDir, context);
+    return;
+  }
+
+  const selectedIds = await context.prompts.selectImportSkills(
+    discovery.candidates,
+  );
+  const candidatesById = new Map(
+    discovery.candidates.map((candidate) => [candidate.id, candidate]),
+  );
+  const selected = selectedIds.map((id) => {
+    const candidate = candidatesById.get(id);
+    if (candidate === undefined) {
+      throw new Error(`Selected import skill is not available: ${id}`);
+    }
+    return candidate;
+  });
+
+  if (selected.length === 0) {
+    console.log("No skills selected for import");
+    return;
+  }
+
+  await applySelectedSkillImports(agenticsRepoDir, catalog, selected, pathOptions);
+  await writeCatalog(agenticsRepoDir, catalog);
+  if (!(await pushAgenticsRepoChanges(agenticsRepoDir, "import skills"))) {
+    throw new Error("Import failed");
+  }
+  console.log(`Imported ${selected.length} skills`);
 }
 
 async function importSelectedProviders(
@@ -726,6 +889,27 @@ async function promptForImportProviders(
   return selected;
 }
 
+async function promptForImportSkills(
+  candidates: ImportableSkillCandidate[],
+): Promise<string[]> {
+  const selected = await multiselect({
+    message: "Import existing skills",
+    options: candidates.map((candidate) => ({
+      hint: candidate.path,
+      label: `${candidate.name} (${candidate.provider}, ${candidate.scope})`,
+      value: candidate.id,
+    })),
+    required: false,
+  });
+
+  if (isCancel(selected)) {
+    cancel("Import cancelled");
+    throw new Error("Import cancelled");
+  }
+
+  return selected;
+}
+
 async function promptForExistingMachineInitAction(
   hasProjectManifest: boolean,
 ): Promise<ExistingMachineInitAction> {
@@ -750,14 +934,18 @@ async function promptForExistingMachineInitAction(
   return selected;
 }
 
-async function promptForMachineReinitializeAction(): Promise<MachineReinitializeAction> {
+async function promptForMachineReinitializeAction(
+  config: JawfishConfig,
+): Promise<MachineReinitializeAction> {
   const selected = await select({
     message: "Edit machine setup",
     options: [
-      { label: "Change default tool", value: "default-tool" },
-      { label: "Change agentics repo link", value: "agentics-repo" },
-      { label: "Install global starter agentics", value: "global-starters" },
-      { label: "Import existing global skills", value: "import-skills" },
+      {
+        label: `Change default tool (${config.defaultTool ?? "missing"})`,
+        value: "default-tool",
+      },
+      { label: "Configure agentics repository", value: "agentics-repo" },
+      { label: "Add existing/global starter agentics", value: "agentics" },
       { label: "Done", value: "done" },
     ],
   });
@@ -821,6 +1009,37 @@ async function printAgenticsRepoInspection(
   const agenticsRepoDir = await inspectionAgenticsRepoDir(agenticsRepo, context);
   const inspection = await inspectAgenticsRepo(agenticsRepoDir);
   printInspection(inspection);
+}
+
+async function printAgenticsRepoLocation(
+  agenticsRepo: string,
+  context: InitContext,
+): Promise<void> {
+  const agenticsRepoDir = await inspectionAgenticsRepoDir(agenticsRepo, context);
+  console.log(`Agentics repo local: ${agenticsRepoDir}`);
+
+  const remote = await originRemote(agenticsRepoDir);
+  if (remote !== undefined) {
+    console.log(`Agentics repo remote: ${remote}`);
+  }
+}
+
+async function originRemote(agenticsRepoDir: string): Promise<string | undefined> {
+  if (!(await exists(join(agenticsRepoDir, ".git")))) {
+    return undefined;
+  }
+
+  const result = await runCommand(
+    "git",
+    ["remote", "get-url", "origin"],
+    agenticsRepoDir,
+    false,
+  );
+  if (result.exitCode !== 0 || result.stdout.trim() === "") {
+    return undefined;
+  }
+
+  return result.stdout.trim();
 }
 
 async function inspectionAgenticsRepoDir(
@@ -899,7 +1118,7 @@ async function promptForAgenticsRepoMode(): Promise<AgenticsRepoMode> {
   const selected = await select({
     message: "Set up agentics repo",
     options: [
-      { label: "Create local repo", value: "local" },
+      { label: "Create/use local repo", value: "local" },
       { label: "Link existing path or git URL", value: "link" },
     ],
   });
@@ -925,4 +1144,35 @@ async function promptForAgenticsRepo(): Promise<string> {
   }
 
   return selected.trim();
+}
+
+async function promptForAgenticsRepoLocalPath(
+  defaultPath: string,
+): Promise<string> {
+  const selected = await text({
+    message: "Local agentics repo path",
+    defaultValue: defaultPath,
+    initialValue: defaultPath,
+    placeholder: defaultPath,
+  });
+
+  if (isCancel(selected)) {
+    cancel("No local agentics repo selected");
+    throw new Error("No local agentics repo selected");
+  }
+
+  return (selected ?? "").trim() || defaultPath;
+}
+
+async function promptForAgenticsRepoRemote(): Promise<string | undefined> {
+  const selected = await text({
+    message: "Remote git URL (optional)",
+  });
+
+  if (isCancel(selected)) {
+    cancel("Remote git URL selection cancelled");
+    throw new Error("Remote git URL selection cancelled");
+  }
+
+  return (selected ?? "").trim() || undefined;
 }

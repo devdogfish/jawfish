@@ -2572,6 +2572,37 @@ describe("jawfish CLI", () => {
     );
   });
 
+  test("init -y clones env git URL into managed local repo", async () => {
+    const context = await setup();
+    const remoteDir = join(context.rootDir, "env-agentics.git");
+    const remoteUrl = `file://${remoteDir}`;
+    await createBareRemote(remoteDir);
+
+    const result = await runJawfish(context, ["init", "-y"], {
+      env: {
+        JAWFISH_AGENTICS_REPO: remoteUrl,
+        JAWFISH_DEFAULT_TOOL: "codex",
+      },
+    });
+
+    const agenticsRepoDir = join(context.homeDir, "agentics");
+
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.match(result.stdout, /Agentics repo local:/);
+    assert.match(result.stdout, /Agentics repo remote:/);
+    assert.deepEqual(
+      JSON.parse(await readFile(configPath(context.homeDir), "utf8")),
+      {
+        agenticsRepo: agenticsRepoDir,
+        defaultTool: "codex",
+      },
+    );
+    assert.equal(
+      (await git(agenticsRepoDir, ["remote", "get-url", "origin"])).stdout.trim(),
+      remoteUrl,
+    );
+  });
+
   test("interactive init creates first-run local machine setup", async () => {
     const context = await setup();
     let promptedTools: readonly string[] = [];
@@ -2836,9 +2867,13 @@ describe("jawfish CLI", () => {
       inputAgenticsRepo: async () => agenticsRepoDir,
       selectAgenticsRepoMode: async () => "link",
       selectDefaultTool: async () => "codex",
-      selectImportProviders: async () => {
+      selectImportSkills: async (candidates) => {
         promptOrder.push("import");
-        return ["codex"];
+        assert.deepEqual(
+          candidates.map((candidate) => candidate.id),
+          ["codex:global:focus"],
+        );
+        return ["codex:global:focus"];
       },
       selectGlobalStarterAgentics: async (inspection) => {
         promptOrder.push("starter");
@@ -2861,7 +2896,7 @@ describe("jawfish CLI", () => {
 
     assert.equal(result.result, 0, result.stderr);
     assert.deepEqual(promptOrder, ["import", "starter"]);
-    assert.match(result.stdout, /Imported 1 skills from codex/);
+    assert.match(result.stdout, /Imported 1 skills/);
     assert.match(result.stdout, /Installed focus globally/);
     await assertJsonFile(join(agenticsRepoDir, "index.json"), {
       focus: {
@@ -2947,15 +2982,165 @@ describe("jawfish CLI", () => {
     assert.deepEqual(
       JSON.parse(await readFile(configPath(context.homeDir), "utf8")),
       {
-        agenticsRepo: remoteDir,
+        agenticsRepo: join(context.homeDir, "agentics"),
         defaultTool: "opencode",
       },
     );
     await stat(join(context.homeDir, "agentics", ".git"));
+    assert.match(result.stdout, /Agentics repo local:/);
+    assert.match(result.stdout, /Agentics repo remote:/);
     await assertJsonFile(join(context.homeDir, "jawfish.json"), { jawfish: {} });
     await assertJsonFile(join(context.projectDir, "jawfish.json"), {
       jawfish: {},
     });
+  });
+
+  test("interactive init links an empty git remote without requiring HEAD", async () => {
+    const context = await setup();
+    const remoteDir = join(context.rootDir, "empty-agentics.git");
+    await createBareRemote(remoteDir);
+
+    const prompts: InitCommandPrompts = {
+      inputAgenticsRepo: async () => remoteDir,
+      selectAgenticsRepoMode: async () => "link",
+      selectDefaultTool: async () => "codex",
+      selectProjectAgentics: async () => [],
+    };
+
+    const result = await captureConsole(() =>
+      initCommand(initArgs(), {
+        cwd: context.projectDir,
+        env: {
+          HOME: context.homeDir,
+          JAWFISH_HOME: context.homeDir,
+        },
+        prompts,
+      }),
+    );
+
+    const agenticsRepoDir = join(context.homeDir, "agentics");
+
+    assert.equal(result.result, 0, result.stderr);
+    assert.match(result.stdout, /Repo is empty/);
+    assert.deepEqual(
+      JSON.parse(await readFile(configPath(context.homeDir), "utf8")),
+      {
+        agenticsRepo: agenticsRepoDir,
+        defaultTool: "codex",
+      },
+    );
+    assert.equal(
+      (await git(agenticsRepoDir, ["branch", "--show-current"])).stdout.trim(),
+      "main",
+    );
+    assert.equal(
+      (await git(agenticsRepoDir, ["remote", "get-url", "origin"])).stdout.trim(),
+      remoteDir,
+    );
+  });
+
+  test("interactive init can place local repo at a chosen path and attach remote", async () => {
+    const context = await setup();
+    const agenticsRepoDir = join(context.rootDir, "chosen-agentics");
+    const remoteDir = join(context.rootDir, "chosen-agentics.git");
+    await createBareRemote(remoteDir);
+
+    const prompts: InitCommandPrompts = {
+      inputAgenticsRepo: async () => {
+        throw new Error("unexpected repo path prompt");
+      },
+      inputAgenticsRepoLocalPath: async (defaultPath) => {
+        assert.equal(defaultPath, join(context.homeDir, "agentics"));
+        return agenticsRepoDir;
+      },
+      inputAgenticsRepoRemote: async () => remoteDir,
+      selectAgenticsRepoMode: async () => "local",
+      selectDefaultTool: async () => "codex",
+      selectProjectAgentics: async () => [],
+    };
+
+    const result = await captureConsole(() =>
+      initCommand(initArgs(), {
+        cwd: context.projectDir,
+        env: {
+          HOME: context.homeDir,
+          JAWFISH_HOME: context.homeDir,
+        },
+        prompts,
+      }),
+    );
+
+    assert.equal(result.result, 0, result.stderr);
+    assert.deepEqual(
+      JSON.parse(await readFile(configPath(context.homeDir), "utf8")),
+      {
+        agenticsRepo: agenticsRepoDir,
+        defaultTool: "codex",
+      },
+    );
+    assert.equal(
+      (await git(agenticsRepoDir, ["remote", "get-url", "origin"])).stdout.trim(),
+      remoteDir,
+    );
+  });
+
+  test("interactive init can attach remote to existing default local repo", async () => {
+    const context = await setup();
+    const agenticsRepoDir = join(context.homeDir, "agentics");
+    const remoteDir = join(context.rootDir, "default-agentics.git");
+    const actions: Array<"agentics-repo" | "done"> = ["agentics-repo", "done"];
+
+    await createGitRepository(agenticsRepoDir);
+    await createBareRemote(remoteDir);
+    await writeFile(
+      configPath(context.homeDir),
+      `${JSON.stringify({
+        agenticsRepo: agenticsRepoDir,
+        defaultTool: "codex",
+      })}\n`,
+    );
+
+    const prompts: InitCommandPrompts = {
+      inputAgenticsRepo: async () => {
+        throw new Error("unexpected repo path prompt");
+      },
+      inputAgenticsRepoLocalPath: async (defaultPath) => {
+        assert.equal(defaultPath, agenticsRepoDir);
+        return "";
+      },
+      inputAgenticsRepoRemote: async () => remoteDir,
+      selectAgenticsRepoMode: async () => "local",
+      selectDefaultTool: async () => {
+        throw new Error("unexpected default tool prompt");
+      },
+      selectExistingMachineInitAction: async () => "reinitialize",
+      selectMachineReinitializeAction: async () => {
+        const action = actions.shift();
+        assert.ok(action);
+        return action;
+      },
+      selectProjectAgentics: async () => {
+        throw new Error("unexpected project setup prompt");
+      },
+    };
+
+    const result = await captureConsole(() =>
+      initCommand(initArgs(), {
+        cwd: context.projectDir,
+        env: {
+          HOME: context.homeDir,
+          JAWFISH_HOME: context.homeDir,
+        },
+        prompts,
+      }),
+    );
+
+    assert.equal(result.result, 0, result.stderr);
+    assert.match(result.stdout, /Updated agentics repo remote:/);
+    assert.equal(
+      (await git(agenticsRepoDir, ["remote", "get-url", "origin"])).stdout.trim(),
+      remoteDir,
+    );
   });
 
   test("interactive init cancel exits without machine writes", async () => {
@@ -3461,11 +3646,7 @@ describe("jawfish CLI", () => {
   test("interactive init reinitialize menu installs starters and imports skills", async () => {
     const context = await setup();
     const agenticsRepoDir = join(context.rootDir, "agentics");
-    const actions: Array<"global-starters" | "import-skills" | "done"> = [
-      "global-starters",
-      "import-skills",
-      "done",
-    ];
+    const actions: Array<"agentics" | "done"> = ["agentics", "done"];
 
     await createGitRepository(agenticsRepoDir);
     await writeIndexedFocusSkill(agenticsRepoDir);
@@ -3475,6 +3656,17 @@ describe("jawfish CLI", () => {
     await writeFile(
       join(context.homeDir, ".codex", "skills", "imported", "SKILL.md"),
       "# Imported\n",
+    );
+    await writeFile(
+      join(context.homeDir, ".codex", "skills", "imported", "notes.md"),
+      "notes\n",
+    );
+    await mkdir(join(context.projectDir, ".codex", "skills", "projected"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(context.projectDir, ".codex", "skills", "projected", "SKILL.md"),
+      "# Projected\n",
     );
     await writeFile(
       configPath(context.homeDir),
@@ -3496,10 +3688,20 @@ describe("jawfish CLI", () => {
       },
       selectExistingMachineInitAction: async () => "reinitialize",
       selectGlobalStarterAgentics: async (inspection) => {
-        assert.deepEqual(inspection.usableNames, ["focus"]);
+        assert.deepEqual(inspection.usableNames, [
+          "focus",
+          "imported",
+          "projected",
+        ]);
         return ["focus"];
       },
-      selectImportProviders: async () => ["codex"],
+      selectImportSkills: async (candidates) => {
+        assert.deepEqual(
+          candidates.map((candidate) => candidate.id),
+          ["codex:global:imported", "codex:project:projected"],
+        );
+        return ["codex:global:imported", "codex:project:projected"];
+      },
       selectMachineReinitializeAction: async () => {
         const action = actions.shift();
         assert.ok(action);
@@ -3524,11 +3726,16 @@ describe("jawfish CLI", () => {
 
     assert.equal(result.result, 0, result.stderr);
     assert.match(result.stdout, /Installed focus globally/);
-    assert.match(result.stdout, /Imported 1 skills from codex/);
+    assert.match(result.stdout, /Imported 2 skills/);
     await assertJsonFile(join(context.homeDir, "jawfish.json"), {
       jawfish: {
         focus: { tool: "codex" },
         imported: { tool: "codex" },
+      },
+    });
+    await assertJsonFile(join(context.projectDir, "jawfish.json"), {
+      jawfish: {
+        projected: { tool: "codex" },
       },
     });
     await assertJsonFile(join(agenticsRepoDir, "index.json"), {
@@ -3542,7 +3749,16 @@ describe("jawfish CLI", () => {
         path: "skills/imported",
         type: "skill",
       },
+      projected: {
+        description: "",
+        path: "skills/projected",
+        type: "skill",
+      },
     });
+    assert.equal(
+      await readFile(join(agenticsRepoDir, "skills", "imported", "notes.md"), "utf8"),
+      "notes\n",
+    );
   });
 
   test("init rejects positional args and unsupported options with init usage", async () => {

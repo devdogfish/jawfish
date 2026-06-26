@@ -1,0 +1,10 @@
+{
+  "files": [
+    "ADR-FORMAT.md",
+    "CONTEXT-FORMAT.md",
+    "SKILL.md"
+  ],
+  "name": "domain-modeling",
+  "tool": "codex",
+  "type": "skill"
+}

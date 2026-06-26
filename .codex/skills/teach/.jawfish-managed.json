@@ -1,0 +1,12 @@
+{
+  "files": [
+    "GLOSSARY-FORMAT.md",
+    "LEARNING-RECORD-FORMAT.md",
+    "MISSION-FORMAT.md",
+    "RESOURCES-FORMAT.md",
+    "SKILL.md"
+  ],
+  "name": "teach",
+  "tool": "codex",
+  "type": "skill"
+}
