@@ -147,9 +147,8 @@ interface ImportPackageResult {
 }
 
 interface PackageUpdate {
-  acquired: AcquiredSource;
-  entry: CatalogEntry;
-  name: string;
+  catalogEntry: CatalogEntry;
+  sourcePath: string;
 }
 
 const commandSpecs = {
@@ -591,19 +590,13 @@ async function updateCommand(args: ParsedArgs): Promise<number> {
   const reinstallScope = getScope(args);
 
   if (name !== undefined) {
-    const update = await preparePackageUpdate(
+    await updatePackageInLibrary(
       libraryDir,
       catalog,
       name,
       args.force,
-    );
-    await assertCanReinstallInScopeIfPresent(
-      update.acquired.packagePath,
-      update.entry,
-      name,
       reinstallScope,
     );
-    await applyPackageUpdate(libraryDir, update);
     await writeCatalog(libraryDir, catalog);
     if (!(await pushLibraryChanges(libraryDir, `update ${name}`))) {
       return 1;
@@ -614,7 +607,6 @@ async function updateCommand(args: ParsedArgs): Promise<number> {
       catalog,
       name,
       reinstallScope,
-      config,
     );
     console.log(`Updated ${name}`);
     return 0;
@@ -641,7 +633,6 @@ async function updateCommand(args: ParsedArgs): Promise<number> {
           catalog,
           updatedName,
           reinstallScope,
-          config,
         ),
       ),
     );
@@ -1340,20 +1331,36 @@ async function preparePackageUpdate(
   }
 
   return {
-    acquired: await acquireSource(entry.upstream),
-    entry,
-    name,
+    catalogEntry: entry,
+    sourcePath: (await acquireSource(entry.upstream)).packagePath,
   };
+}
+
+async function updatePackageInLibrary(
+  libraryDir: string,
+  catalog: Catalog,
+  name: string,
+  force: boolean,
+  reinstallScope: InstallScope,
+): Promise<void> {
+  const update = await preparePackageUpdate(libraryDir, catalog, name, force);
+  await assertCanReinstallInScopeIfPresent(
+    update.sourcePath,
+    update.catalogEntry,
+    name,
+    reinstallScope,
+  );
+  await applyPackageUpdate(libraryDir, update);
 }
 
 async function applyPackageUpdate(
   libraryDir: string,
   update: PackageUpdate,
 ): Promise<void> {
-  const destination = resolveInside(libraryDir, update.entry.path);
+  const destination = resolveInside(libraryDir, update.catalogEntry.path);
   await rm(destination, { force: true, recursive: true });
   await mkdir(dirname(destination), { recursive: true });
-  await cp(update.acquired.packagePath, destination, { recursive: true });
+  await cp(update.sourcePath, destination, { recursive: true });
 }
 
 async function assertCanReinstallInScopeIfPresent(
@@ -1362,13 +1369,11 @@ async function assertCanReinstallInScopeIfPresent(
   name: string,
   scope: InstallScope,
 ): Promise<void> {
-  const manifest = await readManifest(scope);
-  const entry = manifest.jawfish[name];
+  const entry = await installedManifestEntry(scope, name);
   if (entry === undefined) {
     return;
   }
 
-  assertSupportedConfiguredTool(entry.tool, `manifest entry "${name}"`);
   await assertCanMaterializePackage(
     packagePath,
     name,
@@ -1417,19 +1422,13 @@ async function updateAllPackages(
     }
 
     try {
-      const update = await preparePackageUpdate(
+      await updatePackageInLibrary(
         libraryDir,
         catalog,
         name,
         force,
-      );
-      await assertCanReinstallInScopeIfPresent(
-        update.acquired.packagePath,
-        update.entry,
-        name,
         reinstallScope,
       );
-      await applyPackageUpdate(libraryDir, update);
       summary.updated.push(name);
     } catch (error) {
       const failure = bulkUpdateFailure(name, error);
@@ -1479,14 +1478,24 @@ async function reinstallInScopeIfPresent(
   catalog: Catalog,
   name: string,
   scope: InstallScope,
-  _config: JawfishConfig,
 ): Promise<void> {
+  const entry = await installedManifestEntry(scope, name);
+  if (entry !== undefined) {
+    await materialize(libraryDir, catalog, name, scope, entry.tool);
+  }
+}
+
+async function installedManifestEntry(
+  scope: InstallScope,
+  name: string,
+): Promise<ManifestEntry | undefined> {
   const manifest = await readManifest(scope);
   const entry = manifest.jawfish[name];
   if (entry !== undefined) {
     assertSupportedConfiguredTool(entry.tool, `manifest entry "${name}"`);
-    await materialize(libraryDir, catalog, name, scope, entry.tool);
   }
+
+  return entry;
 }
 
 async function resolveTool(config: JawfishConfig): Promise<string> {
