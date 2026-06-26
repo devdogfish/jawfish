@@ -391,25 +391,21 @@ async function installCommand(args: ParsedArgs): Promise<number> {
   const catalog = await readCatalog(libraryDir);
   const scope = getScope(args);
   const manifest = await readManifest(scope);
-  const names = Object.keys(manifest.jawfish);
-
-  for (const name of names) {
-    const tool = manifest.jawfish[name].tool;
+  const installPlan = Object.entries(manifest.jawfish).map(([name, entry]) => {
+    const tool = entry.tool;
     assertSupportedConfiguredTool(tool, `manifest entry "${name}"`);
-    assertCatalogHasAgentic(catalog, name);
+    if (!catalogHasAgentic(catalog, name)) {
+      throw new Error(`Unknown agentic: ${name}`);
+    }
+
+    return { name, tool };
+  });
+
+  for (const { name, tool } of installPlan) {
+    await materialize(libraryDir, catalog, name, scope, tool);
   }
 
-  for (const name of names) {
-    await materialize(
-      libraryDir,
-      catalog,
-      name,
-      scope,
-      manifest.jawfish[name].tool,
-    );
-  }
-
-  console.log(`Installed ${names.length} jawfish to ${scope}`);
+  console.log(`Installed ${installPlan.length} jawfish to ${scope}`);
   return 0;
 }
 
@@ -676,12 +672,6 @@ async function materialize(
     tool,
     type: entry.type,
   });
-}
-
-function assertCatalogHasAgentic(catalog: Catalog, name: string): void {
-  if (!catalogHasAgentic(catalog, name)) {
-    throw new Error(`Unknown agentic: ${name}`);
-  }
 }
 
 async function copyNativeFile(
