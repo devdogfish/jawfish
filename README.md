@@ -22,29 +22,26 @@ Install:
 bun install --global jawfish
 ```
 
-Add a skill from a URL or local path:
-
-```sh
-jawfish add https://github.com/mattpocock/skills/blob/main/skills/productivity/handoff/SKILL.md
-```
-
-Jawfish creates `~/.jawfish/config.json` and a local git repo at
-`~/.jawfish/agentics` on first use.
-
-Initialize first, if you want an interactive machine setup:
+Initialize with the interactive setup:
 
 ```sh
 jawfish init
 ```
 
-Interactive setup can link an existing agentics repo, install selected starter
-entries globally, and optionally import existing global provider skills.
+Interactive setup creates machine config, creates or links the agentics repo,
+offers global starter installs, can import existing global provider skills, and
+then sets up the current project.
 
-Use `-y` for the noninteractive defaults, or run `init` again to choose project
-setup or machine reinitialize:
+Use `-y` for noninteractive defaults:
 
 ```sh
 jawfish init -y
+```
+
+Add a skill from a URL or local path:
+
+```sh
+jawfish add https://github.com/mattpocock/skills/blob/main/skills/productivity/handoff/SKILL.md
 ```
 
 Browse repo entries:
@@ -86,7 +83,7 @@ Project installs are tracked in `jawfish.json`. Global installs are tracked in
 | ---------------------------------- | ------------------------------------ |
 | `jawfish add <name>`               | Install from your repo               |
 | `jawfish add <source>`             | Import from a URL or local file      |
-| `jawfish init [-y]`                | Create or edit setup                 |
+| `jawfish init [options]`           | Create or edit setup                 |
 | `jawfish import-skills <provider>` | Import global provider skills        |
 | `jawfish install <name>`           | Same as `jawfish add <name>`         |
 | `jawfish i <name>`                 | Same as `jawfish add <name>`         |

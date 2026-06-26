@@ -2043,6 +2043,23 @@ describe("jawfish CLI", () => {
     }
   });
 
+  test("documents the enriched init help and README surface", async () => {
+    const context = await setup();
+    const readme = await readFile(resolve("README.md"), "utf8");
+
+    assert.match(readme, /\| `jawfish init \[options\]`\s+\|/);
+    assert.match(readme, /```sh\njawfish init\n```/);
+    assert.match(readme, /```sh\njawfish init -y\n```/);
+    assert.doesNotMatch(readme, /jawfish init <repo>/);
+
+    const result = await runJawfish(context, ["init", "--help"]);
+
+    assert.equal(result.exitCode, 0);
+    assert.match(result.stdout, /Usage: jawfish init \[options\]/);
+    assert.match(result.stdout, /-y, --yes\s+Use noninteractive defaults/);
+    assert.doesNotMatch(result.stdout, /jawfish init <repo>/);
+  });
+
   test("lists catalog entries as a table or JSON", async () => {
     const context = await setup();
     const agenticsRepoDir = join(context.homeDir, "agentics");

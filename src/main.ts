@@ -137,7 +137,7 @@ const commandSpecs = {
     summary: "Create or edit setup",
     usage: "jawfish init [options]",
     options: [
-      "-y, --yes       Run without prompts",
+      "-y, --yes       Use noninteractive defaults",
       "-h, --help      Show help",
     ],
   },
