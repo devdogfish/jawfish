@@ -1,6 +1,5 @@
 #!/usr/bin/env -S node --experimental-strip-types
 import { cancel, confirm, isCancel, select } from "@clack/prompts";
-import { spawn } from "node:child_process";
 import {
   cp,
   mkdir,
@@ -35,6 +34,13 @@ import {
   toolPaths,
   type JawfishConfig,
 } from "./config.ts";
+import { exists } from "./files.ts";
+import { initCommand } from "./init-command.ts";
+import { runCommand } from "./process.ts";
+import {
+  configureAgenticsRepoGitUser,
+  ensureAgenticsRepoIgnore,
+} from "./agentics-repo.ts";
 import {
   destinationSpec,
   typeFolder,
@@ -42,13 +48,11 @@ import {
   type DestinationSpec,
   type InstallScope,
 } from "./tool-adapters.ts";
-import { initCommand } from "./init-command.ts";
 
 const version = "0.1.2";
 const catalogFile = "catalog.json";
 const indexCatalogFile = "index.json";
 const managedMarkerFile = ".jawfish-managed.json";
-const agenticsRepoIgnoreEntries = ["config.json", "jawfish.json"];
 const agenticTypes = [
   "skill",
   "agent",
@@ -98,12 +102,6 @@ interface ParsedArgs {
   raw: boolean;
   type?: string;
   yes: boolean;
-}
-
-interface CommandResult {
-  stderr: string;
-  stdout: string;
-  exitCode: number | null;
 }
 
 interface AcquiredSource {
@@ -1521,7 +1519,7 @@ async function resolveAgenticsRepo(config: JawfishConfig): Promise<string> {
 
   const agenticsRepoDir = managedAgenticsRepoPath();
   if (await exists(join(agenticsRepoDir, ".git"))) {
-    await configureManagedAgenticsRepoUser(agenticsRepoDir);
+    await configureAgenticsRepoGitUser(agenticsRepoDir);
     await ensureAgenticsRepoIgnore(agenticsRepoDir);
     return agenticsRepoDir;
   }
@@ -1537,7 +1535,7 @@ async function initializeLocalManagedAgenticsRepo(agenticsRepoDir: string): Prom
     await runCommand("git", ["init"], agenticsRepoDir);
   }
 
-  await configureManagedAgenticsRepoUser(agenticsRepoDir);
+  await configureAgenticsRepoGitUser(agenticsRepoDir);
   await ensureAgenticsRepoIgnore(agenticsRepoDir);
 }
 
@@ -1547,7 +1545,7 @@ async function initializeManagedAgenticsRepo(
 ): Promise<void> {
   await mkdir(agenticsRepoDir, { recursive: true });
   await runCommand("git", ["init"], agenticsRepoDir);
-  await configureManagedAgenticsRepoUser(agenticsRepoDir);
+  await configureAgenticsRepoGitUser(agenticsRepoDir);
   await runCommand("git", ["remote", "add", "origin", source], agenticsRepoDir);
   await runCommand("git", ["fetch", "origin"], agenticsRepoDir);
 
@@ -1562,32 +1560,6 @@ async function initializeManagedAgenticsRepo(
     ["branch", "--set-upstream-to", `origin/${branch}`, branch],
     agenticsRepoDir,
   );
-}
-
-async function configureManagedAgenticsRepoUser(agenticsRepoDir: string): Promise<void> {
-  const email = await runCommand(
-    "git",
-    ["config", "--get", "user.email"],
-    agenticsRepoDir,
-    false,
-  );
-  if (email.exitCode !== 0 || email.stdout.trim() === "") {
-    await runCommand(
-      "git",
-      ["config", "user.email", "jawfish@example.invalid"],
-      agenticsRepoDir,
-    );
-  }
-
-  const name = await runCommand(
-    "git",
-    ["config", "--get", "user.name"],
-    agenticsRepoDir,
-    false,
-  );
-  if (name.exitCode !== 0 || name.stdout.trim() === "") {
-    await runCommand("git", ["config", "user.name", "Jawfish"], agenticsRepoDir);
-  }
 }
 
 async function remoteDefaultBranch(agenticsRepoDir: string): Promise<string> {
@@ -2177,69 +2149,9 @@ function printPushFailure(error: string, agenticsRepoDir: string): void {
   console.error(`Recover with: git -C ${agenticsRepoDir} push`);
 }
 
-async function runCommand(
-  command: string,
-  args: string[],
-  cwd: string,
-  throwOnFailure = true,
-): Promise<CommandResult> {
-  const child = spawn(command, args, {
-    cwd,
-    env: process.env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([
-    readStream(child.stdout),
-    readStream(child.stderr),
-    waitForExit(child),
-  ]);
-  const result = { exitCode, stderr, stdout };
-
-  if (throwOnFailure && exitCode !== 0) {
-    throw new Error(
-      `${command} ${args.join(" ")} failed (${exitCode ?? "unknown"})\n${stderr}`,
-    );
-  }
-
-  return result;
-}
-
 async function writeJson(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`);
-}
-
-async function ensureAgenticsRepoIgnore(agenticsRepoDir: string): Promise<void> {
-  const ignorePath = join(agenticsRepoDir, ".gitignore");
-  const existing = (await exists(ignorePath))
-    ? await readFile(ignorePath, "utf8")
-    : "";
-  const existingEntries = new Set(
-    existing.split("\n").map((line) => line.trim()),
-  );
-  const missing = agenticsRepoIgnoreEntries.filter(
-    (entry) => !existingEntries.has(entry),
-  );
-  if (missing.length === 0) {
-    return;
-  }
-
-  const separator = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
-  await writeFile(ignorePath, `${existing}${separator}${missing.join("\n")}\n`);
-}
-
-async function exists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return false;
-    }
-
-    throw error;
-  }
 }
 
 function resolveInside(root: string, path: string): string {
@@ -2281,24 +2193,6 @@ async function isMainModule(): Promise<boolean> {
   return modulePath === argvPath;
 }
 
-async function waitForExit(
-  child: ReturnType<typeof spawn>,
-): Promise<number | null> {
-  return new Promise((resolve, reject) => {
-    child.on("close", resolve);
-    child.on("error", reject);
-  });
-}
-
-async function readStream(stream: NodeJS.ReadableStream): Promise<string> {
-  let output = "";
-
-  for await (const chunk of stream) {
-    output += String(chunk);
-  }
-
-  return output;
-}
 
 if (await isMainModule()) {
   process.exitCode = await run(process.argv.slice(2));
