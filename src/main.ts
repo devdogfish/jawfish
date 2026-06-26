@@ -146,6 +146,12 @@ interface ImportPackageResult {
   name: string;
 }
 
+interface PackageUpdate {
+  acquired: AcquiredSource;
+  entry: CatalogEntry;
+  name: string;
+}
+
 const commandSpecs = {
   add: {
     description:
@@ -585,7 +591,19 @@ async function updateCommand(args: ParsedArgs): Promise<number> {
   const reinstallScope = getScope(args);
 
   if (name !== undefined) {
-    await updatePackage(libraryDir, catalog, name, args.force);
+    const update = await preparePackageUpdate(
+      libraryDir,
+      catalog,
+      name,
+      args.force,
+    );
+    await assertCanReinstallInScopeIfPresent(
+      update.acquired.packagePath,
+      update.entry,
+      name,
+      reinstallScope,
+    );
+    await applyPackageUpdate(libraryDir, update);
     await writeCatalog(libraryDir, catalog);
     if (!(await pushLibraryChanges(libraryDir, `update ${name}`))) {
       return 1;
@@ -602,7 +620,12 @@ async function updateCommand(args: ParsedArgs): Promise<number> {
     return 0;
   }
 
-  const summary = await updateAllPackages(libraryDir, catalog, args.force);
+  const summary = await updateAllPackages(
+    libraryDir,
+    catalog,
+    args.force,
+    reinstallScope,
+  );
 
   if (summary.failed.length === 0 && summary.updated.length > 0) {
     await writeCatalog(libraryDir, catalog);
@@ -657,9 +680,19 @@ async function materialize(
   }
 
   const sourcePath = resolveInside(libraryDir, entry.path);
+  await materializePackage(sourcePath, name, entry.type, scope, tool);
+}
+
+async function materializePackage(
+  sourcePath: string,
+  name: string,
+  type: AgenticType,
+  scope: InstallScope,
+  tool: string,
+): Promise<void> {
   const destination = destinationSpec(
     name,
-    entry.type,
+    type,
     scope,
     tool,
     toolPaths(),
@@ -667,7 +700,7 @@ async function materialize(
   const sourceFiles = await packageFiles(sourcePath);
 
   if (destination.kind === "file") {
-    await copyNativeFile(destination, sourceFiles, name, tool, entry.type);
+    await copyNativeFile(destination, sourceFiles, name, tool, type);
     return;
   }
 
@@ -682,7 +715,7 @@ async function materialize(
     files: sourceFiles.map((file) => file.relativePath).sort(),
     name,
     tool,
-    type: entry.type,
+    type,
   });
 }
 
@@ -693,6 +726,21 @@ async function copyNativeFile(
   tool: string,
   type: AgenticType,
 ): Promise<void> {
+  const sourceFile = await assertCanCopyNativeFile(destination, sourceFiles);
+  await mkdir(dirname(destination.path), { recursive: true });
+  await cp(sourceFile.path, destination.path);
+  await writeJson(nativeMarkerPath(destination.path), {
+    files: [basename(destination.path)],
+    name,
+    tool,
+    type,
+  });
+}
+
+async function assertCanCopyNativeFile(
+  destination: Extract<DestinationSpec, { kind: "file" }>,
+  sourceFiles: PackageFile[],
+): Promise<PackageFile> {
   if (sourceFiles.length !== 1) {
     throw new Error(
       `Native ${destination.extension} destinations require exactly one source file: ${destination.path}`,
@@ -707,14 +755,7 @@ async function copyNativeFile(
   }
 
   await assertNoUnmanagedNativeConflict(destination.path);
-  await mkdir(dirname(destination.path), { recursive: true });
-  await cp(sourceFile.path, destination.path);
-  await writeJson(nativeMarkerPath(destination.path), {
-    files: [basename(destination.path)],
-    name,
-    tool,
-    type,
-  });
+  return sourceFile;
 }
 
 async function assertNoUnmanagedNativeConflict(path: string): Promise<void> {
@@ -1272,12 +1313,12 @@ function inferUrlPackageName(pathname: string): string {
   return basename(pathname.replace(/\/$/u, ""));
 }
 
-async function updatePackage(
+async function preparePackageUpdate(
   libraryDir: string,
   catalog: Catalog,
   name: string,
   force: boolean,
-): Promise<void> {
+): Promise<PackageUpdate> {
   const entry = catalog.jawfish[name];
   if (entry === undefined) {
     throw new Error(`Unknown agentic: ${name}`);
@@ -1298,17 +1339,73 @@ async function updatePackage(
     );
   }
 
-  const acquired = await acquireSource(entry.upstream);
-  const destination = resolveInside(libraryDir, entry.path);
+  return {
+    acquired: await acquireSource(entry.upstream),
+    entry,
+    name,
+  };
+}
+
+async function applyPackageUpdate(
+  libraryDir: string,
+  update: PackageUpdate,
+): Promise<void> {
+  const destination = resolveInside(libraryDir, update.entry.path);
   await rm(destination, { force: true, recursive: true });
   await mkdir(dirname(destination), { recursive: true });
-  await cp(acquired.packagePath, destination, { recursive: true });
+  await cp(update.acquired.packagePath, destination, { recursive: true });
+}
+
+async function assertCanReinstallInScopeIfPresent(
+  packagePath: string,
+  catalogEntry: CatalogEntry,
+  name: string,
+  scope: InstallScope,
+): Promise<void> {
+  const manifest = await readManifest(scope);
+  const entry = manifest.jawfish[name];
+  if (entry === undefined) {
+    return;
+  }
+
+  assertSupportedConfiguredTool(entry.tool, `manifest entry "${name}"`);
+  await assertCanMaterializePackage(
+    packagePath,
+    name,
+    catalogEntry.type,
+    scope,
+    entry.tool,
+  );
+}
+
+async function assertCanMaterializePackage(
+  sourcePath: string,
+  name: string,
+  type: AgenticType,
+  scope: InstallScope,
+  tool: string,
+): Promise<void> {
+  const destination = destinationSpec(name, type, scope, tool, toolPaths());
+  const sourceFiles = await packageFiles(sourcePath);
+
+  if (destination.kind === "file") {
+    await assertCanCopyNativeFile(destination, sourceFiles);
+    return;
+  }
+
+  const managedFiles = await managedFileSet(destination.path);
+  await assertNoUnmanagedConflicts(
+    destination.path,
+    sourceFiles,
+    managedFiles,
+  );
 }
 
 async function updateAllPackages(
   libraryDir: string,
   catalog: Catalog,
   force: boolean,
+  reinstallScope: InstallScope,
 ): Promise<BulkUpdateSummary> {
   const summary: BulkUpdateSummary = { failed: [], skipped: [], updated: [] };
 
@@ -1320,7 +1417,19 @@ async function updateAllPackages(
     }
 
     try {
-      await updatePackage(libraryDir, catalog, name, force);
+      const update = await preparePackageUpdate(
+        libraryDir,
+        catalog,
+        name,
+        force,
+      );
+      await assertCanReinstallInScopeIfPresent(
+        update.acquired.packagePath,
+        update.entry,
+        name,
+        reinstallScope,
+      );
+      await applyPackageUpdate(libraryDir, update);
       summary.updated.push(name);
     } catch (error) {
       const failure = bulkUpdateFailure(name, error);

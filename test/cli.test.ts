@@ -1585,6 +1585,10 @@ describe("jawfish CLI", () => {
       JSON.stringify({ jawfish: { focus: { tool: "codex" } } }, null, 2),
     );
     await runJawfish(context, ["install"]);
+    await writeFile(
+      join(context.projectDir, ".codex", "skills", "focus", "notes.md"),
+      "manual\n",
+    );
 
     const result = await runJawfish(context, ["update", "focus"]);
 
@@ -1595,6 +1599,20 @@ describe("jawfish CLI", () => {
         "utf8",
       ),
       "# New\n",
+    );
+    await assert.rejects(
+      readFile(
+        join(context.projectDir, ".codex", "skills", "focus", "stale.md"),
+        "utf8",
+      ),
+      /ENOENT/,
+    );
+    assert.equal(
+      await readFile(
+        join(context.projectDir, ".codex", "skills", "focus", "notes.md"),
+        "utf8",
+      ),
+      "manual\n",
     );
     await assert.rejects(
       readFile(join(libraryDir, "skills", "focus", "stale.md"), "utf8"),
@@ -1768,6 +1786,49 @@ describe("jawfish CLI", () => {
         "utf8",
       ),
       "# Old\n",
+    );
+  });
+
+  test("update aborts before committing when selected reinstall conflicts with unmanaged files", async () => {
+    const context = await setup();
+    const { libraryDir, remoteDir, upstreamDir } =
+      await setupUpstreamFocusLibrary(context);
+    const installDir = join(context.projectDir, ".codex", "skills", "focus");
+
+    await writeFile(join(upstreamDir, "notes.md"), "managed\n");
+    await writeJawfishConfig(context, libraryDir);
+    await writeFile(
+      join(context.projectDir, "jawfish.json"),
+      JSON.stringify({ jawfish: { focus: { tool: "codex" } } }, null, 2),
+    );
+    assert.equal((await runJawfish(context, ["install"])).exitCode, 0);
+    await writeFile(join(installDir, "notes.md"), "manual\n");
+
+    const initialHead = await git(libraryDir, ["rev-parse", "HEAD"]);
+    const initialRemoteHead = await git(remoteDir, ["rev-parse", "HEAD"]);
+    const result = await runJawfish(context, ["update", "focus"]);
+
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stderr, /unmanaged destination file/);
+    assert.equal(
+      await readFile(join(installDir, "notes.md"), "utf8"),
+      "manual\n",
+    );
+    assert.equal(
+      await readFile(join(libraryDir, "skills", "focus", "SKILL.md"), "utf8"),
+      "# Old\n",
+    );
+    await assert.rejects(
+      readFile(join(libraryDir, "skills", "focus", "notes.md"), "utf8"),
+      /ENOENT/,
+    );
+    assert.equal(
+      (await git(libraryDir, ["rev-parse", "HEAD"])).stdout,
+      initialHead.stdout,
+    );
+    assert.equal(
+      (await git(remoteDir, ["rev-parse", "HEAD"])).stdout,
+      initialRemoteHead.stdout,
     );
   });
 
