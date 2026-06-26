@@ -33,9 +33,12 @@ interface InitCommandArgs {
   yes: boolean;
 }
 
+type AgenticsRepoMode = "link" | "local";
+type GitRepositoryState = "created" | "existing";
+
 export interface InitCommandPrompts {
   inputAgenticsRepo: () => Promise<string>;
-  selectAgenticsRepoMode: () => Promise<"link" | "local">;
+  selectAgenticsRepoMode: () => Promise<AgenticsRepoMode>;
   selectDefaultTool: (supportedTools: readonly string[]) => Promise<string>;
 }
 
@@ -122,10 +125,7 @@ async function createInteractiveMachineSetup(
   assertSupportedConfiguredTool(defaultTool, "selected default tool");
 
   const repoMode = await context.prompts.selectAgenticsRepoMode();
-  const agenticsRepo =
-    repoMode === "local"
-      ? managedAgenticsRepoPath(context.env)
-      : await context.prompts.inputAgenticsRepo();
+  const agenticsRepo = await resolveAgenticsRepoSelection(repoMode, context);
 
   const config: JawfishConfig = { agenticsRepo, defaultTool };
   await prepareAgenticsRepo(agenticsRepo, repoMode, context);
@@ -143,9 +143,20 @@ function firstSupportedTool(): string {
   return tool;
 }
 
+async function resolveAgenticsRepoSelection(
+  mode: AgenticsRepoMode,
+  context: InitContext,
+): Promise<string> {
+  if (mode === "local") {
+    return managedAgenticsRepoPath(context.env);
+  }
+
+  return context.prompts.inputAgenticsRepo();
+}
+
 async function prepareAgenticsRepo(
   agenticsRepo: string,
-  mode: "link" | "local",
+  mode: AgenticsRepoMode,
   context: InitContext,
 ): Promise<void> {
   if (mode === "local") {
@@ -154,12 +165,13 @@ async function prepareAgenticsRepo(
   }
 
   const linkedPath = resolveConfiguredPath(agenticsRepo, context.cwd);
-  if ((await exists(linkedPath)) && !(await isBareRepository(linkedPath))) {
+  const linkedPathExists = await exists(linkedPath);
+  if (linkedPathExists && !(await isBareRepository(linkedPath))) {
     await initializeLocalAgenticsRepo(linkedPath, context);
     return;
   }
 
-  if ((await exists(linkedPath)) || looksLikeGitUrl(agenticsRepo)) {
+  if (linkedPathExists || looksLikeGitUrl(agenticsRepo)) {
     await initializeManagedAgenticsRepo(
       agenticsRepo,
       managedAgenticsRepoPath(context.env),
@@ -176,12 +188,7 @@ async function initializeLocalAgenticsRepo(
 ): Promise<void> {
   const agenticsRepoDir = resolveConfiguredPath(agenticsRepo, context.cwd);
 
-  await mkdir(agenticsRepoDir, { recursive: true });
-  if (!(await exists(join(agenticsRepoDir, ".git")))) {
-    await runCommand("git", ["init"], agenticsRepoDir);
-  }
-
-  await configureAgenticsRepoGitUser(agenticsRepoDir);
+  await ensureGitRepository(agenticsRepoDir);
   await ensureAgenticsRepoIgnore(agenticsRepoDir);
 }
 
@@ -189,14 +196,11 @@ async function initializeManagedAgenticsRepo(
   source: string,
   agenticsRepoDir: string,
 ): Promise<void> {
-  await mkdir(agenticsRepoDir, { recursive: true });
-  if (!(await exists(join(agenticsRepoDir, ".git")))) {
-    await runCommand("git", ["init"], agenticsRepoDir);
-    await configureAgenticsRepoGitUser(agenticsRepoDir);
-    await runCommand("git", ["remote", "add", "origin", source], agenticsRepoDir);
-  } else {
-    await configureAgenticsRepoGitUser(agenticsRepoDir);
+  const gitRepositoryState = await ensureGitRepository(agenticsRepoDir);
+  if (gitRepositoryState === "existing") {
     await runCommand("git", ["remote", "set-url", "origin", source], agenticsRepoDir);
+  } else {
+    await runCommand("git", ["remote", "add", "origin", source], agenticsRepoDir);
   }
 
   await runCommand("git", ["fetch", "origin"], agenticsRepoDir);
@@ -213,6 +217,19 @@ async function initializeManagedAgenticsRepo(
     agenticsRepoDir,
   );
   await ensureAgenticsRepoIgnore(agenticsRepoDir);
+}
+
+async function ensureGitRepository(
+  agenticsRepoDir: string,
+): Promise<GitRepositoryState> {
+  await mkdir(agenticsRepoDir, { recursive: true });
+  const hadGitRepository = await exists(join(agenticsRepoDir, ".git"));
+  if (!hadGitRepository) {
+    await runCommand("git", ["init"], agenticsRepoDir);
+  }
+
+  await configureAgenticsRepoGitUser(agenticsRepoDir);
+  return hadGitRepository ? "existing" : "created";
 }
 
 async function remoteDefaultBranch(agenticsRepoDir: string): Promise<string> {
@@ -356,9 +373,7 @@ function looksLikeGitUrl(value: string): boolean {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(value) || /^[^@\s]+@[^:\s]+:.+/.test(value);
 }
 
-async function promptForDefaultTool(
-  tools: readonly string[],
-): Promise<string> {
+async function promptForDefaultTool(tools: readonly string[]): Promise<string> {
   const selected = await select({
     message: "Select default tool",
     options: tools.map((tool) => ({ label: tool, value: tool })),
@@ -372,7 +387,7 @@ async function promptForDefaultTool(
   return selected;
 }
 
-async function promptForAgenticsRepoMode(): Promise<"link" | "local"> {
+async function promptForAgenticsRepoMode(): Promise<AgenticsRepoMode> {
   const selected = await select({
     message: "Set up agentics repo",
     options: [
