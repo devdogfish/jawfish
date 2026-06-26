@@ -395,26 +395,22 @@ async function runMachineReinitialize(
     printMachineConfig(config, context);
     const action = await selectMachineReinitializeAction(context);
 
-    if (action === "done") {
-      return;
+    switch (action) {
+      case "done":
+        return;
+      case "default-tool":
+        config = await reinitializeDefaultTool(config, context);
+        break;
+      case "agentics-repo":
+        config = await reinitializeAgenticsRepo(config, context);
+        break;
+      case "global-starters":
+        await runGlobalStarterEdit(config, context);
+        break;
+      case "import-skills":
+        await runImportSkillsEdit(config, context);
+        break;
     }
-
-    if (action === "default-tool") {
-      config = await reinitializeDefaultTool(config, context);
-      continue;
-    }
-
-    if (action === "agentics-repo") {
-      config = await reinitializeAgenticsRepo(config, context);
-      continue;
-    }
-
-    if (action === "global-starters") {
-      await runGlobalStarterEdit(config, context);
-      continue;
-    }
-
-    await runImportSkillsEdit(config, context);
   }
 }
 
@@ -466,8 +462,7 @@ async function runGlobalStarterEdit(
   config: JawfishConfig,
   context: InitContext,
 ): Promise<void> {
-  const agenticsRepo = configuredAgenticsRepo(config, context);
-  const agenticsRepoDir = await inspectionAgenticsRepoDir(agenticsRepo, context);
+  const agenticsRepoDir = await configuredAgenticsRepoDir(config, context);
   const inspection = await inspectAgenticsRepo(agenticsRepoDir);
 
   printInspection(inspection);
@@ -488,8 +483,7 @@ async function runImportSkillsEdit(
   config: JawfishConfig,
   context: InitContext,
 ): Promise<void> {
-  const agenticsRepo = configuredAgenticsRepo(config, context);
-  const agenticsRepoDir = await inspectionAgenticsRepoDir(agenticsRepo, context);
+  const agenticsRepoDir = await configuredAgenticsRepoDir(config, context);
 
   await importSelectedProviders(agenticsRepoDir, context);
 }
@@ -498,8 +492,7 @@ async function runMachineStarterSetup(
   config: JawfishConfig,
   context: InitContext,
 ): Promise<void> {
-  const agenticsRepo = configuredAgenticsRepo(config, context);
-  const agenticsRepoDir = await inspectionAgenticsRepoDir(agenticsRepo, context);
+  const agenticsRepoDir = await configuredAgenticsRepoDir(config, context);
   let inspection = await inspectAgenticsRepo(agenticsRepoDir);
 
   printInspection(inspection);
@@ -594,8 +587,7 @@ async function runProjectSetup(
   config: JawfishConfig,
   context: InitContext,
 ): Promise<void> {
-  const agenticsRepo = configuredAgenticsRepo(config, context);
-  const agenticsRepoDir = await inspectionAgenticsRepoDir(agenticsRepo, context);
+  const agenticsRepoDir = await configuredAgenticsRepoDir(config, context);
   const inspection = await inspectAgenticsRepo(agenticsRepoDir);
   const manifest = await readManifest("project", {
     cwd: context.cwd,
@@ -773,6 +765,14 @@ function configuredAgenticsRepo(
   }
 
   return config.agenticsRepo;
+}
+
+async function configuredAgenticsRepoDir(
+  config: JawfishConfig,
+  context: InitContext,
+): Promise<string> {
+  const agenticsRepo = configuredAgenticsRepo(config, context);
+  return await inspectionAgenticsRepoDir(agenticsRepo, context);
 }
 
 async function printAgenticsRepoInspection(
