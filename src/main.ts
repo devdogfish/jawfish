@@ -42,6 +42,13 @@ import {
   ensureAgenticsRepoIgnore,
 } from "./agentics-repo.ts";
 import {
+  agenticTypes,
+  readCatalog,
+  writeCatalog,
+  type Catalog,
+  type CatalogEntry,
+} from "./catalog.ts";
+import {
   destinationSpec,
   typeFolder,
   type AgenticType,
@@ -50,31 +57,13 @@ import {
 } from "./tool-adapters.ts";
 
 const version = "0.1.2";
-const catalogFile = "catalog.json";
-const indexCatalogFile = "index.json";
 const managedMarkerFile = ".jawfish-managed.json";
-const agenticTypes = [
-  "skill",
-  "agent",
-  "prompt",
-] as const satisfies readonly AgenticType[];
 
 interface CommandSpec {
   description: string;
   summary: string;
   usage: string;
   options: string[];
-}
-
-interface Catalog {
-  jawfish: Record<string, CatalogEntry>;
-}
-
-interface CatalogEntry {
-  description: string;
-  path: string;
-  type: AgenticType;
-  upstream?: string;
 }
 
 interface Manifest {
@@ -1574,89 +1563,6 @@ async function remoteDefaultBranch(agenticsRepoDir: string): Promise<string> {
   }
 
   return match[1];
-}
-
-async function readCatalog(agenticsRepoDir: string): Promise<Catalog> {
-  const indexPath = join(agenticsRepoDir, indexCatalogFile);
-  if (await exists(indexPath)) {
-    const parsed = JSON.parse(await readFile(indexPath, "utf8")) as unknown;
-    if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      Array.isArray(parsed)
-    ) {
-      throw new Error(
-        `Invalid catalog at ${indexPath}: expected name-keyed object`,
-      );
-    }
-
-    return validateCatalog(indexPath, {
-      jawfish: parsed as Record<string, CatalogEntry>,
-    });
-  }
-
-  const legacyPath = join(agenticsRepoDir, catalogFile);
-  if (await exists(legacyPath)) {
-    const parsed = JSON.parse(
-      await readFile(legacyPath, "utf8"),
-    ) as Partial<Catalog>;
-    return validateCatalog(legacyPath, { jawfish: parsed.jawfish ?? {} });
-  }
-
-  return { jawfish: {} };
-}
-
-async function writeCatalog(
-  agenticsRepoDir: string,
-  catalog: Catalog,
-): Promise<void> {
-  await writeJson(join(agenticsRepoDir, indexCatalogFile), catalog.jawfish);
-  await rm(join(agenticsRepoDir, catalogFile), { force: true });
-}
-
-function validateCatalog(path: string, catalog: Catalog): Catalog {
-  const issues: string[] = [];
-
-  for (const [name, entry] of Object.entries(catalog.jawfish)) {
-    issues.push(...catalogEntryIssues(name, entry));
-  }
-
-  if (issues.length > 0) {
-    throw new Error(`Invalid catalog at ${path}: ${issues.join("; ")}`);
-  }
-
-  return catalog;
-}
-
-function catalogEntryIssues(name: string, entry: unknown): string[] {
-  if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
-    return [`${name}: expected object`];
-  }
-
-  const issues: string[] = [];
-
-  if (!("description" in entry) || typeof entry.description !== "string") {
-    issues.push(`${name}.description`);
-  }
-
-  if (!("path" in entry) || typeof entry.path !== "string") {
-    issues.push(`${name}.path`);
-  }
-
-  if (
-    !("type" in entry) ||
-    (entry.type !== "skill" &&
-      entry.type !== "agent" &&
-      entry.type !== "prompt")
-  ) {
-    issues.push(`${name}.type`);
-  }
-
-  if ("upstream" in entry && typeof entry.upstream !== "string") {
-    issues.push(`${name}.upstream`);
-  }
-
-  return issues;
 }
 
 function printCatalogEntry(

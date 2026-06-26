@@ -2389,6 +2389,114 @@ describe("jawfish CLI", () => {
     );
   });
 
+  test("init inspects registered and unregistered agentics repo entries", async () => {
+    const context = await setup();
+    const agenticsRepoDir = join(context.rootDir, "agentics");
+
+    await createGitRepository(agenticsRepoDir);
+    await mkdir(join(agenticsRepoDir, "skills", "focus"), { recursive: true });
+    await mkdir(join(agenticsRepoDir, "agents", "review"), { recursive: true });
+    await mkdir(join(agenticsRepoDir, "prompts", "plan"), { recursive: true });
+    await mkdir(join(agenticsRepoDir, "skills", "draft"), { recursive: true });
+    await mkdir(join(agenticsRepoDir, "agents", "empty"), { recursive: true });
+    await writeFile(
+      join(agenticsRepoDir, "index.json"),
+      JSON.stringify(
+        {
+          focus: {
+            description: "Focus workflow",
+            path: "skills/focus",
+            type: "skill",
+          },
+          review: {
+            description: "Review changes",
+            path: "agents/review",
+            type: "agent",
+          },
+          plan: {
+            description: "Plan prompt",
+            path: "prompts/plan",
+            type: "prompt",
+          },
+          missing: {
+            description: "Missing package",
+            path: "skills/missing",
+            type: "skill",
+          },
+          bad: {
+            description: 1,
+            path: "skills/bad",
+            type: "skill",
+          },
+        },
+        null,
+        2,
+      ),
+    );
+    await writeFile(join(agenticsRepoDir, "skills", "focus", "SKILL.md"), "# Focus\n");
+    await writeFile(join(agenticsRepoDir, "agents", "review", "AGENT.md"), "# Review\n");
+    await writeFile(join(agenticsRepoDir, "prompts", "plan", "plan.md"), "Plan\n");
+    await writeFile(join(agenticsRepoDir, "skills", "draft", "SKILL.md"), "# Draft\n");
+    await writeFile(
+      configPath(context.homeDir),
+      `${JSON.stringify({
+        agenticsRepo: agenticsRepoDir,
+        defaultTool: "codex",
+      })}\n`,
+    );
+
+    const result = await runJawfish(context, ["init", "--yes"]);
+
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.match(result.stdout, /Agentics repo inspection/);
+    assert.match(result.stdout, /Catalog: .*index\.json/);
+    assert.match(result.stdout, /Counts: 2 skills, 1 agent, 1 prompt/);
+    assert.match(result.stdout, /Usable: focus, plan, review/);
+    assert.match(result.stdout, /Broken: bad: bad\.description/);
+    assert.match(result.stdout, /Broken: missing: path not found: skills\/missing/);
+    assert.match(result.stdout, /Skipped: skills\/draft: not registered/);
+    assert.match(result.stdout, /Skipped: agents\/empty: empty package/);
+  });
+
+  test("init inspects legacy catalog entries", async () => {
+    const context = await setup();
+    const agenticsRepoDir = join(context.rootDir, "agentics");
+
+    await createGitRepository(agenticsRepoDir);
+    await mkdir(join(agenticsRepoDir, "skills", "focus"), { recursive: true });
+    await writeFile(
+      join(agenticsRepoDir, "catalog.json"),
+      JSON.stringify(
+        {
+          jawfish: {
+            focus: {
+              description: "Focus workflow",
+              path: "skills/focus",
+              type: "skill",
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+    await writeFile(join(agenticsRepoDir, "skills", "focus", "SKILL.md"), "# Focus\n");
+    await writeFile(
+      configPath(context.homeDir),
+      `${JSON.stringify({
+        agenticsRepo: agenticsRepoDir,
+        defaultTool: "codex",
+      })}\n`,
+    );
+
+    const result = await runJawfish(context, ["init", "--yes"]);
+
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.match(result.stdout, /Catalog: .*catalog\.json/);
+    assert.match(result.stdout, /Counts: 1 skill, 0 agents, 0 prompts/);
+    assert.match(result.stdout, /Usable: focus/);
+  });
+
   test("init rejects positional args and unsupported options with init usage", async () => {
     const context = await setup();
 
@@ -2701,8 +2809,7 @@ describe("jawfish CLI", () => {
     const result = await runJawfish(context, ["add", "broken"]);
 
     assert.equal(result.exitCode, 1);
-    assert.match(result.stderr, /Invalid catalog/);
-    assert.match(result.stderr, /path/);
+    assert.match(result.stderr, /Invalid catalog at .*index\.json: broken\.path/);
   });
 });
 

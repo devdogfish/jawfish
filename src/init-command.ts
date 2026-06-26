@@ -3,6 +3,8 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import {
   configureAgenticsRepoGitUser,
   ensureAgenticsRepoIgnore,
+  inspectAgenticsRepo,
+  type AgenticsRepoInspection,
 } from "./agentics-repo.ts";
 import {
   assertSupportedConfiguredTool,
@@ -47,12 +49,14 @@ export async function initCommand(args: InitCommandArgs): Promise<number> {
     const config = await createMachineSetup();
     console.log(`Initialized jawfish at ${configPath()}`);
     console.log(`Agentics repo: ${config.agenticsRepo}`);
+    await printAgenticsRepoInspection(config.agenticsRepo);
     return 0;
   }
 
-  await validateMachineSetup();
+  const config = await validateMachineSetup();
   await ensureProjectManifest();
   console.log(`Initialized project at ${manifestPath("project")}`);
+  await printAgenticsRepoInspection(config.agenticsRepo);
   return 0;
 }
 
@@ -101,17 +105,17 @@ async function ensureProjectManifest(): Promise<void> {
   await ensureManifest(manifestPath("project"));
 }
 
-async function validateMachineSetup(): Promise<void> {
+async function validateMachineSetup(): Promise<JawfishConfig> {
   const config = await loadConfig({ promptForMissingDefaultTool: false });
   if (config.agenticsRepo === undefined || config.agenticsRepo === "") {
-    return;
+    return config;
   }
 
   const configured = isAbsolute(config.agenticsRepo)
     ? config.agenticsRepo
     : resolve(process.cwd(), config.agenticsRepo);
   if (resolve(configured) !== resolve(deprecatedAgenticsRepoPath())) {
-    return;
+    return config;
   }
 
   throw new Error(
@@ -127,4 +131,58 @@ async function ensureManifest(path: string): Promise<void> {
 
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify({ jawfish: {} }, null, 2)}\n`);
+}
+
+async function printAgenticsRepoInspection(
+  agenticsRepo: string | undefined,
+): Promise<void> {
+  if (agenticsRepo === undefined || agenticsRepo === "") {
+    console.log("Agentics repo inspection");
+    console.log("Catalog: none");
+    console.log("Counts: 0 skills, 0 agents, 0 prompts");
+    console.log("Usable: none");
+    return;
+  }
+
+  const agenticsRepoDir = isAbsolute(agenticsRepo)
+    ? agenticsRepo
+    : resolve(process.cwd(), agenticsRepo);
+  const inspection = await inspectAgenticsRepo(agenticsRepoDir);
+  printInspection(inspection);
+}
+
+function printInspection(inspection: AgenticsRepoInspection): void {
+  console.log("Agentics repo inspection");
+  console.log(`Catalog: ${inspection.catalogPath ?? "none"}`);
+  console.log(
+    `Counts: ${formatCount(inspection.counts.skill, "skill")}, ` +
+      `${formatCount(inspection.counts.agent, "agent")}, ` +
+      `${formatCount(inspection.counts.prompt, "prompt")}`,
+  );
+  console.log(
+    `Usable: ${
+      inspection.usableNames.length === 0
+        ? "none"
+        : inspection.usableNames.join(", ")
+    }`,
+  );
+
+  if (
+    inspection.usableNames.length === 0 &&
+    inspection.broken.length === 0 &&
+    inspection.skipped.length === 0
+  ) {
+    console.log("Repo is empty. Add or import agentics to make them selectable.");
+  }
+
+  for (const issue of inspection.broken) {
+    console.log(`Broken: ${issue.target}: ${issue.reason}`);
+  }
+  for (const issue of inspection.skipped) {
+    console.log(`Skipped: ${issue.target}: ${issue.reason}`);
+  }
+}
+
+function formatCount(count: number, singular: string): string {
+  return `${count} ${count === 1 ? singular : `${singular}s`}`;
 }
