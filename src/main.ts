@@ -73,7 +73,7 @@ import {
   printImportSkillsPlan,
 } from "./provider-skill-import.ts";
 
-const version = "0.1.2";
+const version = "0.1.3";
 
 interface CommandSpec {
   description: string;
