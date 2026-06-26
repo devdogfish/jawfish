@@ -32,6 +32,8 @@ export interface InspectionIssue {
   target: string;
 }
 
+type PushResult = { ok: true } | { ok: false; error: string };
+
 export async function configureAgenticsRepoGitUser(
   agenticsRepoDir: string,
 ): Promise<void> {
@@ -96,6 +98,19 @@ export async function inspectAgenticsRepo(
   inspection.usableNames.sort((left, right) => left.localeCompare(right));
   inspection.skipped = await unregisteredEntries(agenticsRepoDir, registeredPaths);
   return inspection;
+}
+
+export async function pushAgenticsRepoChanges(
+  agenticsRepoDir: string,
+  message: string,
+): Promise<boolean> {
+  const pushResult = await commitAndPush(agenticsRepoDir, message);
+  if (pushResult.ok) {
+    return true;
+  }
+
+  printPushFailure(pushResult.error, agenticsRepoDir);
+  return false;
 }
 
 async function registeredPathIssue(
@@ -203,4 +218,49 @@ async function ensureGitConfig(
   if (current.exitCode !== 0 || current.stdout.trim() === "") {
     await runCommand("git", ["config", key, value], agenticsRepoDir);
   }
+}
+
+async function commitAndPush(
+  agenticsRepoDir: string,
+  message: string,
+): Promise<PushResult> {
+  if (!(await exists(join(agenticsRepoDir, ".git")))) {
+    return { ok: true };
+  }
+
+  await ensureAgenticsRepoIgnore(agenticsRepoDir);
+  await runCommand("git", ["add", "."], agenticsRepoDir);
+  const status = await runCommand("git", ["status", "--porcelain"], agenticsRepoDir);
+  if (status.stdout.trim() === "") {
+    return { ok: true };
+  }
+
+  await runCommand("git", ["commit", "-m", message], agenticsRepoDir);
+  if (!(await hasPushDestination(agenticsRepoDir))) {
+    return { ok: true };
+  }
+
+  const push = await runCommand("git", ["push"], agenticsRepoDir, false);
+  if (push.exitCode !== 0) {
+    return { ok: false, error: push.stderr || push.stdout };
+  }
+
+  return { ok: true };
+}
+
+async function hasPushDestination(agenticsRepoDir: string): Promise<boolean> {
+  const result = await runCommand(
+    "git",
+    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    agenticsRepoDir,
+    false,
+  );
+
+  return result.exitCode === 0 && result.stdout.trim() !== "";
+}
+
+function printPushFailure(error: string, agenticsRepoDir: string): void {
+  console.error("Agentics repo commit was created, but push failed.");
+  console.error(error.trim());
+  console.error(`Recover with: git -C ${agenticsRepoDir} push`);
 }

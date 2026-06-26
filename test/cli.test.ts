@@ -2481,6 +2481,107 @@ describe("jawfish CLI", () => {
     });
   });
 
+  test("interactive init installs selected global starter entries", async () => {
+    const context = await setup();
+    const agenticsRepoDir = join(context.rootDir, "starter-agentics");
+
+    await createGitRepository(agenticsRepoDir);
+    await writeIndexedFocusSkill(agenticsRepoDir);
+
+    const prompts: InitCommandPrompts = {
+      inputAgenticsRepo: async () => agenticsRepoDir,
+      selectAgenticsRepoMode: async () => "link",
+      selectDefaultTool: async () => "codex",
+      selectGlobalStarterAgentics: async (inspection) => {
+        assert.deepEqual(inspection.usableNames, ["focus"]);
+        return ["focus"];
+      },
+      selectImportProviders: async () => [],
+      selectProjectAgentics: async () => [],
+    };
+
+    const result = await captureConsole(() =>
+      initCommand(initArgs(), {
+        cwd: context.projectDir,
+        env: {
+          HOME: context.homeDir,
+          JAWFISH_HOME: context.homeDir,
+        },
+        prompts,
+      }),
+    );
+
+    assert.equal(result.result, 0, result.stderr);
+    assert.match(result.stdout, /Installed focus globally/);
+    await assertJsonFile(join(context.homeDir, "jawfish.json"), {
+      jawfish: { focus: { tool: "codex" } },
+    });
+    assert.equal(
+      await readFile(
+        join(context.homeDir, ".codex", "skills", "focus", "SKILL.md"),
+        "utf8",
+      ),
+      "# Focus\n\nUse focused execution.\n",
+    );
+  });
+
+  test("interactive init imports before starter selection for empty repos", async () => {
+    const context = await setup();
+    const agenticsRepoDir = join(context.rootDir, "empty-agentics");
+    const promptOrder: string[] = [];
+
+    await createGitRepository(agenticsRepoDir);
+    await mkdir(join(context.homeDir, ".codex", "skills", "focus"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(context.homeDir, ".codex", "skills", "focus", "SKILL.md"),
+      "# Imported Focus\n",
+    );
+
+    const prompts: InitCommandPrompts = {
+      inputAgenticsRepo: async () => agenticsRepoDir,
+      selectAgenticsRepoMode: async () => "link",
+      selectDefaultTool: async () => "codex",
+      selectImportProviders: async () => {
+        promptOrder.push("import");
+        return ["codex"];
+      },
+      selectGlobalStarterAgentics: async (inspection) => {
+        promptOrder.push("starter");
+        assert.deepEqual(inspection.usableNames, ["focus"]);
+        return ["focus"];
+      },
+      selectProjectAgentics: async () => [],
+    };
+
+    const result = await captureConsole(() =>
+      initCommand(initArgs(), {
+        cwd: context.projectDir,
+        env: {
+          HOME: context.homeDir,
+          JAWFISH_HOME: context.homeDir,
+        },
+        prompts,
+      }),
+    );
+
+    assert.equal(result.result, 0, result.stderr);
+    assert.deepEqual(promptOrder, ["import", "starter"]);
+    assert.match(result.stdout, /Imported 1 skills from codex/);
+    assert.match(result.stdout, /Installed focus globally/);
+    await assertJsonFile(join(agenticsRepoDir, "index.json"), {
+      focus: {
+        description: "",
+        path: "skills/focus",
+        type: "skill",
+      },
+    });
+    await assertJsonFile(join(context.homeDir, "jawfish.json"), {
+      jawfish: { focus: { tool: "codex" } },
+    });
+  });
+
   test("interactive init links and inspects a git agentics repo", async () => {
     const context = await setup();
     const remoteDir = await createAgenticsRepoRemote(context, {

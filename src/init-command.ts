@@ -7,7 +7,7 @@ import {
   inspectAgenticsRepo,
   type AgenticsRepoInspection,
 } from "./agentics-repo.ts";
-import { type Catalog } from "./catalog.ts";
+import { readCatalog, type Catalog } from "./catalog.ts";
 import {
   assertSupportedConfiguredTool,
   configPath,
@@ -28,6 +28,7 @@ import {
   writeJson,
   type Manifest,
 } from "./install.ts";
+import { importProviderSkills } from "./provider-skill-import.ts";
 import { runCommand } from "./process.ts";
 
 interface InitCommandArgs {
@@ -47,6 +48,11 @@ export interface InitCommandPrompts {
   inputAgenticsRepo: () => Promise<string>;
   selectAgenticsRepoMode: () => Promise<AgenticsRepoMode>;
   selectDefaultTool: (supportedTools: readonly string[]) => Promise<string>;
+  selectGlobalStarterAgentics?: (
+    inspection: AgenticsRepoInspection,
+    manifest: Manifest,
+  ) => Promise<string[]>;
+  selectImportProviders?: (supportedTools: readonly string[]) => Promise<string[]>;
   selectProjectAgentics?: (
     inspection: AgenticsRepoInspection,
     manifest: Manifest,
@@ -132,6 +138,8 @@ const defaultInitPrompts: InitCommandPrompts = {
   inputAgenticsRepo: promptForAgenticsRepo,
   selectAgenticsRepoMode: promptForAgenticsRepoMode,
   selectDefaultTool: promptForDefaultTool,
+  selectGlobalStarterAgentics: promptForGlobalStarterAgentics,
+  selectImportProviders: promptForImportProviders,
 };
 
 async function createMachineSetup(context: InitContext): Promise<JawfishConfig> {
@@ -160,6 +168,7 @@ async function createInteractiveMachineSetup(
   const config: JawfishConfig = { agenticsRepo, defaultTool };
   await prepareAgenticsRepo(agenticsRepo, repoMode, context);
   await ensureGlobalManifest(context);
+  await runMachineStarterSetup(config, context);
   await saveConfig(config, { env: context.env });
   return config;
 }
@@ -327,6 +336,97 @@ async function ensureManifest(path: string): Promise<void> {
   await writeJson(path, { jawfish: {} });
 }
 
+async function runMachineStarterSetup(
+  config: JawfishConfig,
+  context: InitContext,
+): Promise<void> {
+  const agenticsRepo = configuredAgenticsRepo(config, context);
+  const agenticsRepoDir = await inspectionAgenticsRepoDir(agenticsRepo, context);
+  let inspection = await inspectAgenticsRepo(agenticsRepoDir);
+
+  printInspection(inspection);
+
+  const importedBeforeStarter = inspection.usable.length === 0;
+  if (importedBeforeStarter) {
+    await importSelectedProviders(agenticsRepoDir, context);
+    inspection = await inspectAgenticsRepo(agenticsRepoDir);
+    if (inspection.usable.length > 0) {
+      printInspection(inspection);
+    }
+  }
+
+  if (inspection.usable.length > 0) {
+    await installSelectedGlobalStarters(config, agenticsRepoDir, inspection, context);
+  }
+
+  if (!importedBeforeStarter) {
+    await importSelectedProviders(agenticsRepoDir, context);
+  }
+}
+
+async function importSelectedProviders(
+  agenticsRepoDir: string,
+  context: InitContext,
+): Promise<void> {
+  const prompt = context.prompts.selectImportProviders;
+  if (prompt === undefined) {
+    return;
+  }
+
+  const selectedProviders = await prompt(defaultSupportedTools);
+  for (const provider of selectedProviders) {
+    assertSupportedConfiguredTool(provider, "selected import provider");
+    const catalog = await readCatalog(agenticsRepoDir);
+    const result = await importProviderSkills(agenticsRepoDir, catalog, provider, {
+      cwd: context.cwd,
+      env: context.env,
+    });
+    if (result !== 0) {
+      throw new Error(`Import failed for ${provider}`);
+    }
+  }
+}
+
+async function installSelectedGlobalStarters(
+  config: JawfishConfig,
+  agenticsRepoDir: string,
+  inspection: AgenticsRepoInspection,
+  context: InitContext,
+): Promise<void> {
+  const manifest = await readManifest("global", {
+    cwd: context.cwd,
+    env: context.env,
+  });
+  const selected = await selectGlobalStarterAgentics(context, inspection, manifest);
+  if (selected.length === 0) {
+    console.log("No global starter agentics selected");
+    return;
+  }
+
+  const tool = configuredDefaultTool(config, context);
+  const catalog = catalogFromInspection(inspection);
+  for (const name of selected) {
+    await installManifestEntry(agenticsRepoDir, catalog, name, "global", tool, {
+      cwd: context.cwd,
+      env: context.env,
+    });
+    console.log(`Installed ${name} globally`);
+  }
+}
+
+async function selectGlobalStarterAgentics(
+  context: InitContext,
+  inspection: AgenticsRepoInspection,
+  manifest: Manifest,
+): Promise<string[]> {
+  const prompt = context.prompts.selectGlobalStarterAgentics;
+  if (prompt === undefined) {
+    return [];
+  }
+
+  return await prompt(inspection, manifest);
+}
+
 async function runProjectSetup(
   config: JawfishConfig,
   context: InitContext,
@@ -397,6 +497,48 @@ async function promptForProjectAgentics(
   if (isCancel(selected)) {
     cancel("Project setup cancelled");
     throw new Error("Project setup cancelled");
+  }
+
+  return selected;
+}
+
+async function promptForGlobalStarterAgentics(
+  inspection: AgenticsRepoInspection,
+  manifest: Manifest,
+): Promise<string[]> {
+  const selected = await multiselect({
+    message: "Select global starter agentics",
+    options: inspection.usable.map(({ entry, name }) => ({
+      hint: entry.description,
+      label: `${name} (${entry.type})`,
+      value: name,
+    })),
+    initialValues: Object.keys(manifest.jawfish).filter((name) =>
+      inspection.usableNames.includes(name),
+    ),
+    required: false,
+  });
+
+  if (isCancel(selected)) {
+    cancel("Starter setup cancelled");
+    throw new Error("Starter setup cancelled");
+  }
+
+  return selected;
+}
+
+async function promptForImportProviders(
+  tools: readonly string[],
+): Promise<string[]> {
+  const selected = await multiselect({
+    message: "Import existing global skills",
+    options: tools.map((tool) => ({ label: tool, value: tool })),
+    required: false,
+  });
+
+  if (isCancel(selected)) {
+    cancel("Import cancelled");
+    throw new Error("Import cancelled");
   }
 
   return selected;

@@ -30,7 +30,6 @@ import {
   loadConfig,
   managedAgenticsRepoPath,
   saveConfig,
-  toolPaths,
   type JawfishConfig,
 } from "./config.ts";
 import { exists } from "./files.ts";
@@ -38,13 +37,10 @@ import { initCommand } from "./init-command.ts";
 import {
   assertCanMaterializePackage,
   installManifestEntry,
-  installedFiles,
-  managedMarkerFile,
   materialize,
   readManifest,
   removeMaterialized,
   resolveInside,
-  writeJson,
   writeManifest,
   type Manifest,
   type ManifestEntry,
@@ -53,6 +49,7 @@ import { runCommand } from "./process.ts";
 import {
   configureAgenticsRepoGitUser,
   ensureAgenticsRepoIgnore,
+  pushAgenticsRepoChanges,
 } from "./agentics-repo.ts";
 import {
   agenticTypes,
@@ -63,11 +60,16 @@ import {
   type CatalogEntry,
 } from "./catalog.ts";
 import {
-  destinationSpec,
   typeFolder,
   type AgenticType,
   type InstallScope,
 } from "./tool-adapters.ts";
+import {
+  applySkillImport,
+  globalSkillRoot,
+  planSkillImport,
+  printImportSkillsPlan,
+} from "./provider-skill-import.ts";
 
 const version = "0.1.2";
 
@@ -96,8 +98,6 @@ interface AcquiredSource {
   packagePath: string;
 }
 
-type PushResult = { ok: true } | { ok: false; error: string };
-
 interface BulkUpdateFailure {
   details: string;
   message: string;
@@ -108,22 +108,6 @@ interface BulkUpdateSummary {
   failed: BulkUpdateFailure[];
   skipped: string[];
   updated: string[];
-}
-
-interface DiscoveredSkill {
-  name: string;
-  path: string;
-}
-
-interface ImportSkillsPlan {
-  conflicts: string[];
-  imported: DiscoveredSkill[];
-  skipped: ImportSkillsSkip[];
-}
-
-interface ImportSkillsSkip {
-  name: string;
-  reason: string;
 }
 
 interface ImportPackageResult {
@@ -687,67 +671,6 @@ function isSameUpstream(existing: string | undefined, source: string): boolean {
   return existing === source;
 }
 
-async function planSkillImport(
-  sourceRoot: string,
-  catalog: Catalog,
-): Promise<ImportSkillsPlan> {
-  const plan: ImportSkillsPlan = { conflicts: [], imported: [], skipped: [] };
-  if (!(await exists(sourceRoot))) {
-    return plan;
-  }
-
-  const entries = await readdir(sourceRoot, { withFileTypes: true });
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.startsWith(".")) {
-      continue;
-    }
-
-    const sourcePath = join(sourceRoot, entry.name);
-    const skillPath = join(sourcePath, "SKILL.md");
-    if (!(await exists(skillPath))) {
-      plan.skipped.push({
-        name: entry.name,
-        reason: "missing SKILL.md",
-      });
-      continue;
-    }
-
-    if (catalogHasAgentic(catalog, entry.name)) {
-      plan.conflicts.push(entry.name);
-      continue;
-    }
-
-    plan.imported.push({ name: entry.name, path: sourcePath });
-  }
-
-  plan.conflicts.sort();
-  plan.imported.sort((left, right) => left.name.localeCompare(right.name));
-  plan.skipped.sort((left, right) => left.name.localeCompare(right.name));
-  return plan;
-}
-
-function printImportSkillsPlan(
-  provider: string,
-  sourceRoot: string,
-  plan: ImportSkillsPlan,
-): void {
-  console.log(`Import skills from ${provider}`);
-  console.log(`source: ${sourceRoot}`);
-  console.log(
-    `import: ${formatSummaryNames(plan.imported.map((skill) => skill.name))}`,
-  );
-  console.log(`conflicts: ${formatSummaryNames(plan.conflicts)}`);
-  console.log(`skipped: ${formatImportSkillSkips(plan.skipped)}`);
-}
-
-function formatImportSkillSkips(skipped: ImportSkillsSkip[]): string {
-  if (skipped.length === 0) {
-    return "none";
-  }
-
-  return skipped.map((skip) => `${skip.name} (${skip.reason})`).join(", ");
-}
-
 async function confirmImportSkills(count: number): Promise<boolean> {
   const selected = await confirm({
     message: `Import ${count} skills?`,
@@ -760,47 +683,6 @@ async function confirmImportSkills(count: number): Promise<boolean> {
   }
 
   return selected;
-}
-
-async function applySkillImport(
-  agenticsRepoDir: string,
-  catalog: Catalog,
-  provider: string,
-  skills: DiscoveredSkill[],
-): Promise<void> {
-  const manifest = await readManifest("global");
-
-  for (const skill of skills) {
-    const packagePath = join(typeFolder("skill"), skill.name);
-    const destination = resolveInside(agenticsRepoDir, packagePath);
-
-    await rm(destination, { force: true, recursive: true });
-    await mkdir(dirname(destination), { recursive: true });
-    await cp(skill.path, destination, { recursive: true });
-    await rm(join(destination, managedMarkerFile), { force: true });
-
-    catalog.jawfish[skill.name] = {
-      description: "",
-      path: packagePath,
-      type: "skill",
-    };
-    manifest.jawfish[skill.name] = { tool: provider };
-    await adoptGlobalSkill(skill, provider);
-  }
-
-  await writeManifest("global", manifest);
-}
-
-async function adoptGlobalSkill(
-  skill: DiscoveredSkill,
-  provider: string,
-): Promise<void> {
-  await writeJson(join(skill.path, managedMarkerFile), {
-    files: (await installedFiles(skill.path)).sort(),
-    name: skill.name,
-    tool: provider,
-    type: "skill",
-  });
 }
 
 async function acquireSource(source: string): Promise<AcquiredSource> {
@@ -1455,18 +1337,6 @@ function inferPackageName(packagePath: string): string {
   return basename(packagePath).replace(/\.[^.]+$/, "");
 }
 
-function globalSkillRoot(tool: string): string {
-  return dirname(
-    destinationSpec(
-      "__jawfish_import_probe__",
-      "skill",
-      "global",
-      tool,
-      toolPaths(),
-    ).path,
-  );
-}
-
 function getScope(args: ParsedArgs): InstallScope {
   return args.global ? "global" : "project";
 }
@@ -1658,64 +1528,6 @@ async function dirtyPaths(
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
-}
-
-async function commitAndPush(
-  agenticsRepoDir: string,
-  message: string,
-): Promise<PushResult> {
-  if (!(await exists(join(agenticsRepoDir, ".git")))) {
-    return { ok: true };
-  }
-
-  await ensureAgenticsRepoIgnore(agenticsRepoDir);
-  await runCommand("git", ["add", "."], agenticsRepoDir);
-  const status = await runCommand("git", ["status", "--porcelain"], agenticsRepoDir);
-  if (status.stdout.trim() === "") {
-    return { ok: true };
-  }
-
-  await runCommand("git", ["commit", "-m", message], agenticsRepoDir);
-  if (!(await hasPushDestination(agenticsRepoDir))) {
-    return { ok: true };
-  }
-
-  const push = await runCommand("git", ["push"], agenticsRepoDir, false);
-  if (push.exitCode !== 0) {
-    return { ok: false, error: push.stderr || push.stdout };
-  }
-
-  return { ok: true };
-}
-
-async function hasPushDestination(agenticsRepoDir: string): Promise<boolean> {
-  const result = await runCommand(
-    "git",
-    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
-    agenticsRepoDir,
-    false,
-  );
-
-  return result.exitCode === 0 && result.stdout.trim() !== "";
-}
-
-async function pushAgenticsRepoChanges(
-  agenticsRepoDir: string,
-  message: string,
-): Promise<boolean> {
-  const pushResult = await commitAndPush(agenticsRepoDir, message);
-  if (pushResult.ok) {
-    return true;
-  }
-
-  printPushFailure(pushResult.error, agenticsRepoDir);
-  return false;
-}
-
-function printPushFailure(error: string, agenticsRepoDir: string): void {
-  console.error("Agentics repo commit was created, but push failed.");
-  console.error(error.trim());
-  console.error(`Recover with: git -C ${agenticsRepoDir} push`);
 }
 
 function isUrl(value: string): boolean {

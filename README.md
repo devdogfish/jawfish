@@ -37,8 +37,11 @@ Initialize first, if you want an interactive machine setup:
 jawfish init
 ```
 
-Use `-y` for the noninteractive defaults, or run it again in a project to
-create an empty project manifest:
+Interactive setup can link an existing agentics repo, install selected starter
+entries globally, and optionally import existing global provider skills.
+
+Use `-y` for the noninteractive defaults, or run `init` again in a project to
+create or update the project manifest:
 
 ```sh
 jawfish init -y
@@ -109,8 +112,11 @@ changes after add/import/update when an upstream exists.
 `init` runs an interactive first-run machine setup when config is missing. It
 asks for the default tool, creates the local agentics repo by default or links
 an existing local path/git URL, inspects what Jawfish can see, writes repo ignore
-rules, and creates an empty global manifest. It does not create GitHub
-repositories or ask branch questions.
+rules, creates the global manifest, offers registered repo entries as global
+starter installs, and can import existing global provider skills. If the linked
+repo is empty, import is offered before starter selection so imported skills can
+be installed in the same run. It does not create GitHub repositories or ask
+branch questions.
 
 `init -y` or `init --yes` uses noninteractive defaults. With no machine config,
 it creates `~/.jawfish/config.json`, the configured/default agentics repo, repo
