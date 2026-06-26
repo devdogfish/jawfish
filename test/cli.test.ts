@@ -1459,6 +1459,36 @@ describe("jawfish CLI", () => {
     });
   });
 
+  test("adds a direct repo skill path without prompting", async () => {
+    const context = await setup();
+    const agenticsRepoDir = join(context.rootDir, "agentics");
+    const sourceRepoDir = join(context.rootDir, "skills-source");
+    const focusSkill = join(sourceRepoDir, "skills", "focus", "SKILL.md");
+
+    await createGitRepository(agenticsRepoDir);
+    await createGitRepository(sourceRepoDir);
+    await mkdir(join(sourceRepoDir, "skills", "focus"), { recursive: true });
+    await mkdir(join(sourceRepoDir, "skills", "plan"), { recursive: true });
+    await writeFile(focusSkill, "# Focus\n");
+    await writeFile(join(sourceRepoDir, "skills", "plan", "SKILL.md"), "# Plan\n");
+    await git(sourceRepoDir, ["add", "."]);
+    await git(sourceRepoDir, ["commit", "-m", "add skills"]);
+    await writeJawfishConfig(context, agenticsRepoDir);
+
+    const result = await runJawfish(context, ["add", focusSkill]);
+
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.equal(result.stdout.split("\n")[0], "Added focus to project");
+    assert.doesNotMatch(result.stdout, /Select repo skills/);
+    assert.match(
+      result.stdout,
+      /Also found 1 repo skill\. Run jawfish add <repo> to choose them\./,
+    );
+    await assertMissingFile(
+      join(context.projectDir, ".codex", "skills", "plan", "SKILL.md"),
+    );
+  });
+
   test("reuses a renamed local source when installing another scope", async () => {
     const context = await setup();
     const agenticsRepoDir = join(context.rootDir, "agentics");

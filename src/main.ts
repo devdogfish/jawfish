@@ -980,11 +980,11 @@ async function selectRepoSkillCandidates(
   yes: boolean,
 ): Promise<RepoSkillCandidate[]> {
   const direct = directRepoSkillCandidate(candidates, repoSource);
-  if (yes) {
-    if (direct !== undefined) {
-      return [direct];
-    }
+  if (direct !== undefined) {
+    return [direct];
+  }
 
+  if (yes) {
     return candidates.filter((candidate) => !candidate.conflict);
   }
 
