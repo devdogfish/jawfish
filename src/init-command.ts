@@ -524,11 +524,11 @@ async function importSelectedProviders(
     return;
   }
 
-  const selectedProviders = await prompt(defaultSupportedTools);
-  assertSelectedImportProvidersSupported(selectedProviders);
+  const selectedProviderNames = await prompt(defaultSupportedTools);
+  assertSelectedImportProvidersSupported(selectedProviderNames);
 
   const pathOptions = { cwd: context.cwd, env: context.env };
-  for (const provider of selectedProviders) {
+  for (const provider of selectedProviderNames) {
     const catalog = await readCatalog(agenticsRepoDir);
     const result = await importProviderSkills(
       agenticsRepoDir,
@@ -592,10 +592,8 @@ async function runProjectSetup(
 ): Promise<void> {
   const agenticsRepoDir = await configuredAgenticsRepoDir(config, context);
   const inspection = await inspectAgenticsRepo(agenticsRepoDir);
-  const manifest = await readManifest("project", {
-    cwd: context.cwd,
-    env: context.env,
-  });
+  const pathOptions = { cwd: context.cwd, env: context.env };
+  const manifest = await readManifest("project", pathOptions);
 
   console.log(
     `Initialized project at ${manifestPath("project", context.env, context.cwd)}`,
@@ -620,10 +618,14 @@ async function runProjectSetup(
   const tool = configuredDefaultTool(config, context);
   const catalog = catalogFromInspection(inspection);
   for (const name of selected) {
-    await installManifestEntry(agenticsRepoDir, catalog, name, "project", tool, {
-      cwd: context.cwd,
-      env: context.env,
-    });
+    await installManifestEntry(
+      agenticsRepoDir,
+      catalog,
+      name,
+      "project",
+      tool,
+      pathOptions,
+    );
     console.log(`Installed ${name} to project`);
   }
 }
@@ -638,11 +640,11 @@ async function selectProjectAgentics(
 }
 
 function assertSelectedAgenticsAvailable(
-  selected: string[],
+  selectedNames: string[],
   inspection: AgenticsRepoInspection,
 ): void {
   const available = new Set(inspection.usableNames);
-  const missing = selected.filter((name) => !available.has(name));
+  const missing = selectedNames.filter((name) => !available.has(name));
   if (missing.length === 0) {
     return;
   }
@@ -653,8 +655,10 @@ function assertSelectedAgenticsAvailable(
   );
 }
 
-function assertSelectedImportProvidersSupported(selectedProviders: string[]): void {
-  for (const provider of selectedProviders) {
+function assertSelectedImportProvidersSupported(
+  selectedProviderNames: string[],
+): void {
+  for (const provider of selectedProviderNames) {
     assertSupportedConfiguredTool(provider, "selected import provider");
   }
 }

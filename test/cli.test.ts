@@ -68,6 +68,10 @@ async function assertJsonFile(path: string, expected: unknown): Promise<void> {
   assert.deepEqual(await readJsonFile(path), expected);
 }
 
+async function assertMissingFile(path: string): Promise<void> {
+  await assert.rejects(readFile(path, "utf8"), { code: "ENOENT" });
+}
+
 function initArgs(overrides: Partial<Parameters<typeof initCommand>[0]> = {}) {
   return {
     force: false,
@@ -2505,12 +2509,8 @@ describe("jawfish CLI", () => {
       ),
       /Agentics repo path not found/,
     );
-    await assert.rejects(readFile(configPath(context.homeDir), "utf8"), {
-      code: "ENOENT",
-    });
-    await assert.rejects(readFile(join(context.homeDir, "jawfish.json"), "utf8"), {
-      code: "ENOENT",
-    });
+    await assertMissingFile(configPath(context.homeDir));
+    await assertMissingFile(join(context.homeDir, "jawfish.json"));
   });
 
   test("interactive init installs selected global starter entries", async () => {
@@ -2587,16 +2587,10 @@ describe("jawfish CLI", () => {
       /Selected agentic is not available: missing/,
     );
     await assertJsonFile(join(context.homeDir, "jawfish.json"), { jawfish: {} });
-    await assert.rejects(
-      readFile(
-        join(context.homeDir, ".codex", "skills", "focus", "SKILL.md"),
-        "utf8",
-      ),
-      { code: "ENOENT" },
+    await assertMissingFile(
+      join(context.homeDir, ".codex", "skills", "focus", "SKILL.md"),
     );
-    await assert.rejects(readFile(configPath(context.homeDir), "utf8"), {
-      code: "ENOENT",
-    });
+    await assertMissingFile(configPath(context.homeDir));
   });
 
   test("interactive init project cancellation preserves existing manifest", async () => {
@@ -2605,13 +2599,7 @@ describe("jawfish CLI", () => {
 
     await createGitRepository(agenticsRepoDir);
     await writeIndexedFocusSkill(agenticsRepoDir);
-    await writeFile(
-      configPath(context.homeDir),
-      `${JSON.stringify({
-        agenticsRepo: agenticsRepoDir,
-        defaultTool: "codex",
-      })}\n`,
-    );
+    await writeJawfishConfig(context, agenticsRepoDir);
     await writeFile(
       join(context.projectDir, "jawfish.json"),
       JSON.stringify({ jawfish: { existing: { tool: "codex" } } }, null, 2),
@@ -2649,12 +2637,8 @@ describe("jawfish CLI", () => {
     await assertJsonFile(join(context.projectDir, "jawfish.json"), {
       jawfish: { existing: { tool: "codex" } },
     });
-    await assert.rejects(
-      readFile(
-        join(context.projectDir, ".codex", "skills", "focus", "SKILL.md"),
-        "utf8",
-      ),
-      { code: "ENOENT" },
+    await assertMissingFile(
+      join(context.projectDir, ".codex", "skills", "focus", "SKILL.md"),
     );
   });
 
@@ -2750,12 +2734,8 @@ describe("jawfish CLI", () => {
       /Unsupported selected import provider: unknown/,
     );
     await assertJsonFile(join(context.homeDir, "jawfish.json"), { jawfish: {} });
-    await assert.rejects(readFile(join(agenticsRepoDir, "index.json"), "utf8"), {
-      code: "ENOENT",
-    });
-    await assert.rejects(readFile(configPath(context.homeDir), "utf8"), {
-      code: "ENOENT",
-    });
+    await assertMissingFile(join(agenticsRepoDir, "index.json"));
+    await assertMissingFile(configPath(context.homeDir));
   });
 
   test("interactive init links and inspects a git agentics repo", async () => {
@@ -2897,19 +2877,11 @@ describe("jawfish CLI", () => {
     await assertJsonFile(join(context.projectDir, "jawfish.json"), {
       jawfish: {},
     });
-    await assert.rejects(
-      readFile(
-        join(context.projectDir, ".codex", "skills", "focus", "SKILL.md"),
-        "utf8",
-      ),
-      { code: "ENOENT" },
+    await assertMissingFile(
+      join(context.projectDir, ".codex", "skills", "focus", "SKILL.md"),
     );
-    await assert.rejects(
-      readFile(
-        join(context.homeDir, ".codex", "skills", "focus", "SKILL.md"),
-        "utf8",
-      ),
-      { code: "ENOENT" },
+    await assertMissingFile(
+      join(context.homeDir, ".codex", "skills", "focus", "SKILL.md"),
     );
   });
 
