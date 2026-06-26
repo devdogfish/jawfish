@@ -484,6 +484,7 @@ async function importSkillsCommand(args: ParsedArgs): Promise<number> {
   printImportSkillsPlan(provider, sourceRoot, plan);
 
   if (plan.imported.length === 0) {
+    console.log("No importable skills found");
     return 0;
   }
 

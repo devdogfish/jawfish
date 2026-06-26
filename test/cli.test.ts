@@ -486,6 +486,158 @@ describe("jawfish CLI", () => {
     );
   });
 
+  test("imports global skills from every supported provider", async () => {
+    for (const tool of [
+      "codex",
+      "claude-code",
+      "hermes",
+      "openclaw",
+      "opencode",
+      "pi",
+    ] as const) {
+      const context = await setup();
+      const libraryDir = join(context.rootDir, `content-library-${tool}`);
+      const codexHome = join(context.rootDir, "codex-home");
+      const env: Record<string, string> =
+        tool === "codex" ? { CODEX_HOME: codexHome } : {};
+      const providerSkillDir = dirname(
+        installedFocusSkillPath(context, tool, "global", codexHome),
+      );
+
+      await createGitRepository(libraryDir);
+      await writeJawfishConfig(context, libraryDir);
+      await mkdir(providerSkillDir, { recursive: true });
+      await writeFile(join(providerSkillDir, "SKILL.md"), `# ${tool}\n`);
+
+      const result = await runJawfish(
+        context,
+        ["import-skills", tool, "--yes"],
+        { env },
+      );
+
+      assert.equal(result.exitCode, 0, result.stderr);
+      assert.match(result.stdout, /import: focus/);
+      assert.deepEqual(
+        JSON.parse(
+          await readFile(join(context.homeDir, "jawfish.json"), "utf8"),
+        ),
+        { jawfish: { focus: { tool } } },
+      );
+      assert.deepEqual(
+        JSON.parse(
+          await readFile(join(providerSkillDir, ".jawfish-managed.json"), "utf8"),
+        ),
+        {
+          files: ["SKILL.md"],
+          name: "focus",
+          tool,
+          type: "skill",
+        },
+      );
+    }
+  });
+
+  test("strips provider managed markers from imported library packages", async () => {
+    const context = await setup();
+    const libraryDir = join(context.rootDir, "content-library");
+    const codexHome = join(context.rootDir, "codex-home");
+    const providerSkillDir = join(codexHome, "skills", "focus");
+
+    await createGitRepository(libraryDir);
+    await writeJawfishConfig(context, libraryDir);
+    await mkdir(providerSkillDir, { recursive: true });
+    await writeFile(join(providerSkillDir, "SKILL.md"), "# Focus\n");
+    await writeFile(
+      join(providerSkillDir, ".jawfish-managed.json"),
+      JSON.stringify(
+        {
+          files: ["SKILL.md", "old.md"],
+          name: "focus",
+          tool: "codex",
+          type: "skill",
+        },
+        null,
+        2,
+      ),
+    );
+
+    const result = await runJawfish(
+      context,
+      ["import-skills", "codex", "--yes"],
+      { env: { CODEX_HOME: codexHome } },
+    );
+
+    assert.equal(result.exitCode, 0, result.stderr);
+    await assert.rejects(
+      readFile(
+        join(libraryDir, "skills", "focus", ".jawfish-managed.json"),
+        "utf8",
+      ),
+      { code: "ENOENT" },
+    );
+    assert.deepEqual(
+      JSON.parse(
+        await readFile(
+          join(providerSkillDir, ".jawfish-managed.json"),
+          "utf8",
+        ),
+      ),
+      {
+        files: ["SKILL.md"],
+        name: "focus",
+        tool: "codex",
+        type: "skill",
+      },
+    );
+  });
+
+  test("reports empty provider skill directories without writes", async () => {
+    const context = await setup();
+    const libraryDir = join(context.rootDir, "content-library");
+    const codexHome = join(context.rootDir, "codex-home");
+
+    await createGitRepository(libraryDir);
+    await writeJawfishConfig(context, libraryDir);
+    await mkdir(join(codexHome, "skills"), { recursive: true });
+
+    const result = await runJawfish(
+      context,
+      ["import-skills", "codex", "--yes"],
+      { env: { CODEX_HOME: codexHome } },
+    );
+
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.match(result.stdout, /No importable skills found/);
+    await assert.rejects(readFile(join(libraryDir, "index.json"), "utf8"), {
+      code: "ENOENT",
+    });
+    await assert.rejects(
+      readFile(join(context.homeDir, "jawfish.json"), "utf8"),
+      { code: "ENOENT" },
+    );
+  });
+
+  test("fails unsupported provider imports with supported tools", async () => {
+    const context = await setup();
+    const libraryDir = join(context.rootDir, "content-library");
+
+    await createGitRepository(libraryDir);
+    await writeJawfishConfig(context, libraryDir);
+
+    const result = await runJawfish(context, [
+      "import-skills",
+      "unknown",
+      "--yes",
+    ]);
+
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stderr, /Unsupported provider: unknown/);
+    assert.match(
+      result.stderr,
+      /Supported tools: codex, claude-code, hermes, openclaw, opencode, pi/,
+    );
+  });
+
   test("skips import conflicts", async () => {
     const context = await setup();
     const libraryDir = join(context.rootDir, "content-library");
