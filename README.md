@@ -31,16 +31,16 @@ jawfish add https://github.com/mattpocock/skills/blob/main/skills/productivity/h
 Jawfish creates `~/.jawfish/config.json` and a local git repo at
 `~/.jawfish/agentics` on first use.
 
-Initialize first, if you want to choose defaults before adding:
+Initialize first, if you want to create the base machine setup:
 
 ```sh
-jawfish init
+jawfish init -y
 ```
 
-Use an existing repo:
+Run it again in a project to create an empty project manifest:
 
 ```sh
-jawfish init git@github.com:you/agentics.git
+jawfish init -y
 ```
 
 Browse repo entries:
@@ -82,7 +82,7 @@ Project installs are tracked in `jawfish.json`. Global installs are tracked in
 | ---------------------------------- | ------------------------------------ |
 | `jawfish add <name>`               | Install from your repo               |
 | `jawfish add <source>`             | Import from a URL or local file      |
-| `jawfish init [agentics-repo]`     | Create config and package repo       |
+| `jawfish init [-y]`                | Create machine or project setup      |
 | `jawfish import-skills <provider>` | Import global provider skills        |
 | `jawfish install <name>`           | Same as `jawfish add <name>`         |
 | `jawfish i <name>`                 | Same as `jawfish add <name>`         |
@@ -104,6 +104,11 @@ and `--raw` for JSON output.
 
 Jawfish pulls remote-backed repos before install/list and commits/pushes repo
 changes after add/import/update when an upstream exists.
+
+`init` accepts `-y` or `--yes` for the noninteractive flow. With no machine
+config, it creates `~/.jawfish/config.json`, the configured/default agentics
+repo, repo ignore rules, and an empty global manifest. With machine config
+already present, it creates the project `jawfish.json` if missing.
 
 ## Configuration
 

@@ -2319,11 +2319,15 @@ describe("jawfish CLI", () => {
     }
   });
 
-  test("initializes config and a local agentics repo", async () => {
+  test("init -y creates minimum machine setup from env defaults", async () => {
     const context = await setup();
+    const agenticsRepoDir = join(context.rootDir, "env-agentics");
 
-    const result = await runJawfish(context, ["init"], {
-      env: { JAWFISH_DEFAULT_TOOL: "codex" },
+    const result = await runJawfish(context, ["init", "-y"], {
+      env: {
+        JAWFISH_AGENTICS_REPO: agenticsRepoDir,
+        JAWFISH_DEFAULT_TOOL: "hermes",
+      },
     });
 
     assert.equal(result.exitCode, 0, result.stderr);
@@ -2331,19 +2335,72 @@ describe("jawfish CLI", () => {
     assert.deepEqual(
       JSON.parse(await readFile(configPath(context.homeDir), "utf8")),
       {
-        agenticsRepo: join(context.homeDir, "agentics"),
-        defaultTool: "codex",
+        agenticsRepo: agenticsRepoDir,
+        defaultTool: "hermes",
       },
     );
-    await stat(join(context.homeDir, "agentics", ".git"));
+    await stat(join(agenticsRepoDir, ".git"));
+    assert.match(
+      await readFile(join(agenticsRepoDir, ".gitignore"), "utf8"),
+      /config\.json/,
+    );
+    assert.match(
+      await readFile(join(agenticsRepoDir, ".gitignore"), "utf8"),
+      /jawfish\.json/,
+    );
+    await assertJsonFile(join(context.homeDir, "jawfish.json"), { jawfish: {} });
+    await assert.rejects(
+      readFile(join(context.projectDir, "jawfish.json"), "utf8"),
+      { code: "ENOENT" },
+    );
+  });
 
-    const repeated = await runJawfish(context, ["init"], {
-      env: { JAWFISH_DEFAULT_TOOL: "codex" },
+  test("init -y with machine config creates only the project manifest", async () => {
+    const context = await setup();
+    const agenticsRepoDir = join(context.rootDir, "agentics");
+
+    await createGitRepository(agenticsRepoDir);
+    await writeIndexedFocusSkill(agenticsRepoDir);
+    await writeFile(
+      configPath(context.homeDir),
+      `${JSON.stringify({
+        agenticsRepo: agenticsRepoDir,
+        defaultTool: "codex",
+      })}\n`,
+    );
+
+    const result = await runJawfish(context, ["init", "--yes"]);
+
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.match(result.stdout, /Initialized project/);
+    await assertJsonFile(join(context.projectDir, "jawfish.json"), {
+      jawfish: {},
     });
+    await assert.rejects(
+      readFile(
+        join(context.projectDir, ".codex", "skills", "focus", "SKILL.md"),
+        "utf8",
+      ),
+      { code: "ENOENT" },
+    );
+    await assert.rejects(
+      readFile(join(context.homeDir, "jawfish.json"), "utf8"),
+      { code: "ENOENT" },
+    );
+  });
 
-    assert.equal(repeated.exitCode, 0, repeated.stderr);
-    assert.match(repeated.stdout, /Initialized jawfish/);
-    await stat(join(context.homeDir, "agentics", ".git"));
+  test("init rejects positional args and unsupported options with init usage", async () => {
+    const context = await setup();
+
+    for (const args of [
+      ["init", "git@example.com:you/agentics.git"],
+      ["init", "--raw"],
+    ]) {
+      const result = await runJawfish(context, args);
+
+      assert.equal(result.exitCode, 1, args.join(" "));
+      assert.match(result.stderr, /Usage: jawfish init \[options\]/);
+    }
   });
 
   test("prints a clear error for an unknown catalog name in an empty local agentics repo", async () => {
@@ -2421,11 +2478,6 @@ describe("jawfish CLI", () => {
         args: ["add", "--yes", "focus"],
         option: "--yes",
         usage: /Usage: jawfish add/,
-      },
-      {
-        args: ["init", "--yes"],
-        option: "--yes",
-        usage: /Usage: jawfish init/,
       },
       {
         args: ["install", "--yes"],

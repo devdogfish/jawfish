@@ -42,6 +42,7 @@ import {
   type DestinationSpec,
   type InstallScope,
 } from "./tool-adapters.ts";
+import { initCommand } from "./init-command.ts";
 
 const version = "0.1.2";
 const catalogFile = "catalog.json";
@@ -166,8 +167,11 @@ const commandSpecs = {
   init: {
     description: "Initialize jawfish config and agentics repo.",
     summary: "Initialize jawfish",
-    usage: "jawfish init [agentics-repo]",
-    options: ["-h, --help      Show help"],
+    usage: "jawfish init [options]",
+    options: [
+      "-y, --yes       Run without prompts",
+      "-h, --help      Show help",
+    ],
   },
   install: {
     description:
@@ -242,7 +246,7 @@ type CommandName = keyof typeof commandSpecs;
 const commandNames = Object.keys(commandSpecs) as CommandName[];
 const commandOptions: Record<CommandName, readonly string[]> = {
   add: ["-g", "--global", "--name", "-h", "--help"],
-  init: ["-h", "--help"],
+  init: ["-y", "--yes", "-h", "--help"],
   install: ["-g", "--global", "--name", "-h", "--help"],
   i: ["-g", "--global", "--name", "-h", "--help"],
   "import-skills": ["-y", "--yes", "-h", "--help"],
@@ -372,31 +376,6 @@ async function addCommand(args: ParsedArgs): Promise<number> {
 
   await installOne(agenticsRepoDir, catalog, imported.name, scope, config);
   console.log(`Added ${imported.name} to ${scope}`);
-  return 0;
-}
-
-async function initCommand(args: ParsedArgs): Promise<number> {
-  if (
-    args.force ||
-    args.global ||
-    args.name !== undefined ||
-    args.positionals.length > 1
-  ) {
-    console.error("Usage: jawfish init [agentics-repo]");
-    return 1;
-  }
-
-  const config = await loadConfig();
-  const source = args.positionals[0];
-  if (source !== undefined) {
-    config.agenticsRepo = source;
-    await saveConfig(config);
-  }
-
-  const agenticsRepoDir = await resolveAgenticsRepo(config);
-  await resolveTool(config);
-  console.log(`Initialized jawfish at ${configPath()}`);
-  console.log(`Agentics repo: ${agenticsRepoDir}`);
   return 0;
 }
 
