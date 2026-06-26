@@ -396,7 +396,17 @@ async function installCommand(args: ParsedArgs): Promise<number> {
   for (const name of names) {
     const tool = manifest.jawfish[name].tool;
     assertSupportedConfiguredTool(tool, `manifest entry "${name}"`);
-    await materialize(libraryDir, catalog, name, scope, tool);
+    assertCatalogHasAgentic(catalog, name);
+  }
+
+  for (const name of names) {
+    await materialize(
+      libraryDir,
+      catalog,
+      name,
+      scope,
+      manifest.jawfish[name].tool,
+    );
   }
 
   console.log(`Installed ${names.length} jawfish to ${scope}`);
@@ -666,6 +676,12 @@ async function materialize(
     tool,
     type: entry.type,
   });
+}
+
+function assertCatalogHasAgentic(catalog: Catalog, name: string): void {
+  if (!catalogHasAgentic(catalog, name)) {
+    throw new Error(`Unknown agentic: ${name}`);
+  }
 }
 
 async function copyNativeFile(

@@ -426,6 +426,55 @@ describe("jawfish CLI", () => {
     }
   });
 
+  test("removing one scope preserves the other scope and unmanaged files", async () => {
+    const context = await setup();
+    const libraryDir = join(context.rootDir, "content-library");
+    const codexHome = join(context.rootDir, "codex-home");
+    const env = { CODEX_HOME: codexHome };
+    const projectSkill = join(
+      context.projectDir,
+      ".codex",
+      "skills",
+      "focus",
+      "SKILL.md",
+    );
+    const globalSkill = join(codexHome, "skills", "focus", "SKILL.md");
+    const globalNotes = join(codexHome, "skills", "focus", "notes.md");
+
+    await createGitRepository(libraryDir);
+    await writeIndexedFocusSkill(libraryDir);
+    await writeJawfishConfig(context, libraryDir);
+    assert.equal(
+      (await runJawfish(context, ["add", "focus"], { env })).exitCode,
+      0,
+    );
+    assert.equal(
+      (await runJawfish(context, ["add", "-g", "focus"], { env })).exitCode,
+      0,
+    );
+    await writeFile(globalNotes, "manual\n");
+
+    const result = await runJawfish(context, ["remove", "focus"], { env });
+
+    assert.equal(result.exitCode, 0, result.stderr);
+    await assert.rejects(readFile(projectSkill, "utf8"), /ENOENT/);
+    assert.equal(
+      await readFile(globalSkill, "utf8"),
+      "# Focus\n\nUse focused execution.\n",
+    );
+    assert.equal(await readFile(globalNotes, "utf8"), "manual\n");
+    assert.deepEqual(
+      JSON.parse(
+        await readFile(join(context.projectDir, "jawfish.json"), "utf8"),
+      ),
+      { jawfish: {} },
+    );
+    assert.deepEqual(
+      JSON.parse(await readFile(join(context.homeDir, "jawfish.json"), "utf8")),
+      { jawfish: { focus: { tool: "codex" } } },
+    );
+  });
+
   test("imports global skills from a supported tool with yes", async () => {
     const context = await setup();
     const libraryDir = join(context.rootDir, "content-library");
@@ -559,6 +608,51 @@ describe("jawfish CLI", () => {
     assert.match(
       result.stderr,
       /Supported tools: codex, claude-code, hermes, openclaw, opencode, pi/,
+    );
+  });
+
+  test("install with a missing catalog entry aborts before writing managed files", async () => {
+    const context = await setup();
+    const libraryDir = join(context.rootDir, "content-library");
+    const installedSkill = join(
+      context.projectDir,
+      ".codex",
+      "skills",
+      "focus",
+      "SKILL.md",
+    );
+
+    await createGitRepository(libraryDir);
+    await writeIndexedFocusSkill(libraryDir);
+    await writeJawfishConfig(context, libraryDir);
+    await writeFile(
+      join(context.projectDir, "jawfish.json"),
+      JSON.stringify({ jawfish: { focus: { tool: "codex" } } }, null, 2),
+    );
+    const firstInstall = await runJawfish(context, ["install"]);
+    assert.equal(firstInstall.exitCode, 0, firstInstall.stderr);
+    await writeFile(join(libraryDir, "skills", "focus", "SKILL.md"), "# New\n");
+    await writeFile(
+      join(context.projectDir, "jawfish.json"),
+      JSON.stringify(
+        {
+          jawfish: {
+            focus: { tool: "codex" },
+            missing: { tool: "codex" },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const result = await runJawfish(context, ["install"]);
+
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stderr, /Unknown agentic: missing/);
+    assert.equal(
+      await readFile(installedSkill, "utf8"),
+      "# Focus\n\nUse focused execution.\n",
     );
   });
 
@@ -766,6 +860,7 @@ describe("jawfish CLI", () => {
     const firstInstall = await runJawfish(context, ["install"]);
 
     assert.equal(firstInstall.exitCode, 0, firstInstall.stderr);
+    await rm(join(installDir, "SKILL.md"));
     await writeFile(join(installDir, "user.md"), "manual\n");
     await writeFile(
       join(libraryDir, "skills", "focus", "SKILL.md"),
