@@ -1912,6 +1912,14 @@ describe("jawfish CLI", () => {
       },
     );
     await stat(join(context.homeDir, "content-library", ".git"));
+
+    const repeated = await runJawfish(context, ["init"], {
+      env: { JAWFISH_DEFAULT_TOOL: "codex" },
+    });
+
+    assert.equal(repeated.exitCode, 0, repeated.stderr);
+    assert.match(repeated.stdout, /Initialized jawfish/);
+    await stat(join(context.homeDir, "content-library", ".git"));
   });
 
   test("prints a clear error for an unknown catalog name in an empty local library", async () => {
@@ -1961,6 +1969,83 @@ describe("jawfish CLI", () => {
       await readFile(logPath, "utf8"),
       "update\n-g\njawfish\n--latest\n",
     );
+  });
+
+  test("rejects unrelated options before running commands", async () => {
+    const context = await setup();
+    const libraryDir = join(context.rootDir, "content-library");
+    const fakeBinDir = join(context.rootDir, "bin");
+    const fakeBun = join(fakeBinDir, "bun");
+    const logPath = join(context.rootDir, "bun-args.txt");
+
+    await createGitRepository(libraryDir);
+    await writeIndexedFocusSkill(libraryDir);
+    await writeJawfishConfig(context, libraryDir);
+    await mkdir(fakeBinDir, { recursive: true });
+    await writeFile(
+      fakeBun,
+      `#!/bin/sh\nprintf '%s\\n' "$@" > ${JSON.stringify(logPath)}\n`,
+    );
+    await chmod(fakeBun, 0o755);
+
+    const cases: Array<{
+      args: string[];
+      option: string;
+      usage: RegExp;
+    }> = [
+      {
+        args: ["add", "--yes", "focus"],
+        option: "--yes",
+        usage: /Usage: jawfish add/,
+      },
+      {
+        args: ["init", "--yes"],
+        option: "--yes",
+        usage: /Usage: jawfish init/,
+      },
+      {
+        args: ["install", "--yes"],
+        option: "--yes",
+        usage: /Usage: jawfish install/,
+      },
+      { args: ["i", "--yes"], option: "--yes", usage: /Usage: jawfish i/ },
+      {
+        args: ["import-skills", "--raw", "codex"],
+        option: "--raw",
+        usage: /Usage: jawfish import-skills/,
+      },
+      { args: ["list", "--yes"], option: "--yes", usage: /Usage: jawfish list/ },
+      {
+        args: ["update", "--yes"],
+        option: "--yes",
+        usage: /Usage: jawfish update/,
+      },
+      {
+        args: ["remove", "--yes", "focus"],
+        option: "--yes",
+        usage: /Usage: jawfish remove/,
+      },
+      {
+        args: ["upgrade", "--yes"],
+        option: "--yes",
+        usage: /Usage: jawfish upgrade/,
+      },
+    ];
+
+    for (const testCase of cases) {
+      const result = await runJawfish(context, testCase.args, {
+        env: { PATH: `${fakeBinDir}:${process.env.PATH ?? ""}` },
+      });
+
+      assert.equal(result.exitCode, 1, testCase.args.join(" "));
+      assert.match(
+        result.stderr,
+        new RegExp(`Unsupported option: ${testCase.option}`),
+      );
+      assert.match(result.stderr, testCase.usage);
+    }
+
+    await assert.rejects(readFile(logPath, "utf8"), /ENOENT/);
   });
 
   test("creates first-run config with default tools and selected default tool", async () => {
@@ -2111,7 +2196,7 @@ describe("jawfish CLI", () => {
       })}\n`,
     );
 
-    const result = await runJawfish(context, ["add", "focus"]);
+    const result = await runJawfish(context, ["init"]);
 
     assert.equal(result.exitCode, 1);
     assert.match(

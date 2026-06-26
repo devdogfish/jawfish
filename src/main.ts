@@ -235,6 +235,17 @@ const commandSpecs = {
 
 type CommandName = keyof typeof commandSpecs;
 const commandNames = Object.keys(commandSpecs) as CommandName[];
+const commandOptions: Record<CommandName, readonly string[]> = {
+  add: ["-g", "--global", "--name", "-h", "--help"],
+  init: ["-h", "--help"],
+  install: ["-g", "--global", "--name", "-h", "--help"],
+  i: ["-g", "--global", "--name", "-h", "--help"],
+  "import-skills": ["-y", "--yes", "-h", "--help"],
+  list: ["--type", "--installed", "--raw", "-h", "--help"],
+  update: ["-g", "--global", "-F", "--force", "-h", "--help"],
+  upgrade: ["-h", "--help"],
+  remove: ["-g", "--global", "-h", "--help"],
+};
 
 export async function promptForTool(tools: readonly string[]): Promise<string> {
   const selected = await select({
@@ -1821,32 +1832,35 @@ function parseArgs(args: string[], command: CommandName): ParsedArgs {
     switch (arg) {
       case "-F":
       case "--force":
+        assertAllowedOption(command, arg);
         parsed.force = true;
         break;
       case "-g":
       case "--global":
+        assertAllowedOption(command, arg);
         parsed.global = true;
         break;
       case "-h":
       case "--help":
+        assertAllowedOption(command, arg);
         parsed.help = true;
         break;
       case "-y":
       case "--yes":
+        assertAllowedOption(command, arg);
         parsed.yes = true;
         break;
       case "--raw":
-        if (command !== "list") {
-          parsed.positionals.push(arg);
-          break;
-        }
-
+        assertAllowedOption(command, arg);
         parsed.raw = true;
         break;
       case "--name": {
+        assertAllowedOption(command, arg);
         const name = args[index + 1];
         if (name === undefined) {
-          throw new Error("--name requires a value");
+          throw new Error(
+            `--name requires a value\nUsage: ${commandSpecs[command].usage}`,
+          );
         }
 
         parsed.name = name;
@@ -1854,14 +1868,12 @@ function parseArgs(args: string[], command: CommandName): ParsedArgs {
         break;
       }
       case "--type": {
-        if (command !== "list") {
-          parsed.positionals.push(arg);
-          break;
-        }
-
+        assertAllowedOption(command, arg);
         const type = args[index + 1];
         if (type === undefined) {
-          throw new Error("--type requires a value");
+          throw new Error(
+            `--type requires a value\nUsage: ${commandSpecs[command].usage}`,
+          );
         }
 
         parsed.type = type;
@@ -1869,14 +1881,12 @@ function parseArgs(args: string[], command: CommandName): ParsedArgs {
         break;
       }
       case "--installed": {
-        if (command !== "list") {
-          parsed.positionals.push(arg);
-          break;
-        }
-
+        assertAllowedOption(command, arg);
         const installed = args[index + 1];
         if (installed === undefined) {
-          throw new Error("--installed requires a value");
+          throw new Error(
+            `--installed requires a value\nUsage: ${commandSpecs[command].usage}`,
+          );
         }
 
         parsed.installed = installed;
@@ -1884,12 +1894,26 @@ function parseArgs(args: string[], command: CommandName): ParsedArgs {
         break;
       }
       default:
+        if (arg.startsWith("-")) {
+          throw new Error(
+            `Unknown option: ${arg}\nUsage: ${commandSpecs[command].usage}`,
+          );
+        }
+
         parsed.positionals.push(arg);
         break;
     }
   }
 
   return parsed;
+}
+
+function assertAllowedOption(command: CommandName, option: string): void {
+  if (!commandOptions[command].includes(option)) {
+    throw new Error(
+      `Unsupported option: ${option}\nUsage: ${commandSpecs[command].usage}`,
+    );
+  }
 }
 
 function printRootHelp(): void {

@@ -55,6 +55,8 @@ export async function runJawfish(
     env: {
       JAWFISH_HOME: context.homeDir,
       HOME: context.homeDir,
+      CODEX_HOME: join(context.homeDir, ".codex"),
+      OPENCODE_CONFIG_DIR: join(context.homeDir, ".config", "opencode"),
       XDG_CONFIG_HOME: join(context.homeDir, ".config"),
       ...options.env,
     },
