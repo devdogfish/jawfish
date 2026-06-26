@@ -13,7 +13,7 @@ export const defaultSupportedTools = supportedTools;
 const projectManifestFile = "jawfish.json";
 
 export interface JawfishConfig {
-  contentLibrary?: string;
+  agenticsRepo?: string;
   defaultTool?: string;
 }
 
@@ -68,16 +68,18 @@ export async function loadConfig(
   const filePath = await existingConfigPath(env);
   const existing = filePath === undefined ? {} : await readConfig(filePath);
   const config: JawfishConfig = {};
-  if (existing.contentLibrary !== undefined) {
-    config.contentLibrary = existing.contentLibrary;
+  let changed =
+    filePath === undefined || existing.allowedTools !== undefined;
+
+  if (existing.agenticsRepo !== undefined) {
+    config.agenticsRepo = existing.agenticsRepo;
   }
   if (existing.defaultTool !== undefined) {
     config.defaultTool = existing.defaultTool;
   }
-  let changed = filePath === undefined || existing.allowedTools !== undefined;
 
-  if (config.contentLibrary === undefined && env.JAWFISH_CONTENT_LIBRARY) {
-    config.contentLibrary = env.JAWFISH_CONTENT_LIBRARY;
+  if (config.agenticsRepo === undefined && env.JAWFISH_AGENTICS_REPO) {
+    config.agenticsRepo = env.JAWFISH_AGENTICS_REPO;
     changed = true;
   }
 
@@ -160,7 +162,15 @@ async function readConfig(path: string): Promise<RawConfig> {
 
 async function writeConfig(path: string, config: JawfishConfig): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(config, null, 2)}\n`);
+  const persisted: JawfishConfig = {};
+  if (config.agenticsRepo !== undefined) {
+    persisted.agenticsRepo = config.agenticsRepo;
+  }
+  if (config.defaultTool !== undefined) {
+    persisted.defaultTool = config.defaultTool;
+  }
+
+  await writeFile(path, `${JSON.stringify(persisted, null, 2)}\n`);
 }
 
 export function assertSupportedConfiguredTool(
@@ -174,16 +184,16 @@ export function assertSupportedConfiguredTool(
   }
 }
 
-export function managedLibraryPath(
+export function managedAgenticsRepoPath(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  return join(jawfishHome(env), "content-library");
+  return join(jawfishHome(env), "agentics");
 }
 
-export function deprecatedLibraryPath(
+export function deprecatedAgenticsRepoPath(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  return join(jawfishHome(env), "library");
+  return join(jawfishHome(env), "repo");
 }
 
 export function manifestPath(

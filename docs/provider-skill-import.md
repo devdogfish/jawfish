@@ -17,7 +17,7 @@ Scope:
 - Type: skills only.
 - Default: preview, then confirmation prompt.
 - Writes: require prompt confirmation or `-y`/`--yes`.
-- Target: content library plus global `jawfish.json`.
+- Target: agentics repo plus global `jawfish.json`.
 - Adoption: imported global files become Jawfish-managed.
 - Conflicts: skip existing catalog names and report them.
 

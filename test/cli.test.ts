@@ -37,7 +37,7 @@ async function setup(): Promise<CliTestContext> {
 
 async function writeJawfishConfig(
   context: CliTestContext,
-  libraryDir: string,
+  agenticsRepoDir: string,
   tool = "codex",
 ): Promise<void> {
   const configDir = join(context.homeDir, ".config", "jawfish");
@@ -47,7 +47,7 @@ async function writeJawfishConfig(
     join(configDir, "config.json"),
     JSON.stringify(
       {
-        contentLibrary: libraryDir,
+        agenticsRepo: agenticsRepoDir,
         defaultTool: tool,
       },
       null,
@@ -74,10 +74,10 @@ async function assertCodexScopeConfigs(
   await assertJsonFile(join(context.homeDir, "jawfish.json"), expected);
 }
 
-async function writeIndexedFocusSkill(libraryDir: string): Promise<void> {
-  await mkdir(join(libraryDir, "skills", "focus"), { recursive: true });
+async function writeIndexedFocusSkill(agenticsRepoDir: string): Promise<void> {
+  await mkdir(join(agenticsRepoDir, "skills", "focus"), { recursive: true });
   await writeFile(
-    join(libraryDir, "index.json"),
+    join(agenticsRepoDir, "index.json"),
     JSON.stringify(
       {
         focus: {
@@ -91,22 +91,22 @@ async function writeIndexedFocusSkill(libraryDir: string): Promise<void> {
     ),
   );
   await writeFile(
-    join(libraryDir, "skills", "focus", "SKILL.md"),
+    join(agenticsRepoDir, "skills", "focus", "SKILL.md"),
     "# Focus\n\nUse focused execution.\n",
   );
 }
 
-interface UpstreamFocusLibrary {
-  libraryDir: string;
+interface UpstreamFocusAgenticsRepo {
+  agenticsRepoDir: string;
   remoteDir: string;
   upstreamDir: string;
 }
 
-interface BulkUpdateLibrary extends UpstreamFocusLibrary {
+interface BulkUpdateAgenticsRepo extends UpstreamFocusAgenticsRepo {
   upstreamPlanDir: string;
 }
 
-async function setupUpstreamFocusLibrary(
+async function setupUpstreamFocusAgenticsRepo(
   context: CliTestContext,
   options: {
     catalogFile?: "catalog.json" | "index.json";
@@ -114,9 +114,9 @@ async function setupUpstreamFocusLibrary(
     staleFile?: boolean;
     upstream?: string;
   } = {},
-): Promise<UpstreamFocusLibrary> {
-  const libraryDir = join(context.rootDir, "content-library");
-  const remoteDir = join(context.rootDir, "content-library.git");
+): Promise<UpstreamFocusAgenticsRepo> {
+  const agenticsRepoDir = join(context.rootDir, "agentics");
+  const remoteDir = join(context.rootDir, "agentics.git");
   const upstreamDir = join(context.rootDir, "upstream-focus");
   const catalogFile = options.catalogFile ?? "index.json";
   const shouldPushRemote = options.pushRemote ?? true;
@@ -131,43 +131,43 @@ async function setupUpstreamFocusLibrary(
       ? { jawfish: { focus: focusEntry } }
       : { focus: focusEntry };
 
-  await createGitRepository(libraryDir);
+  await createGitRepository(agenticsRepoDir);
   if (shouldPushRemote) {
     await createBareRemote(remoteDir);
-    await git(libraryDir, ["remote", "add", "origin", remoteDir]);
+    await git(agenticsRepoDir, ["remote", "add", "origin", remoteDir]);
   }
 
-  await mkdir(join(libraryDir, "skills", "focus"), { recursive: true });
+  await mkdir(join(agenticsRepoDir, "skills", "focus"), { recursive: true });
   await writeFile(
-    join(libraryDir, catalogFile),
+    join(agenticsRepoDir, catalogFile),
     JSON.stringify(catalog, null, 2),
   );
-  await writeFile(join(libraryDir, "skills", "focus", "SKILL.md"), "# Old\n");
+  await writeFile(join(agenticsRepoDir, "skills", "focus", "SKILL.md"), "# Old\n");
   if (options.staleFile) {
-    await writeFile(join(libraryDir, "skills", "focus", "stale.md"), "stale\n");
+    await writeFile(join(agenticsRepoDir, "skills", "focus", "stale.md"), "stale\n");
   }
 
-  await git(libraryDir, ["add", "."]);
-  await git(libraryDir, ["commit", "-m", "seed focus"]);
+  await git(agenticsRepoDir, ["add", "."]);
+  await git(agenticsRepoDir, ["commit", "-m", "seed focus"]);
   if (shouldPushRemote) {
-    await git(libraryDir, ["push", "-u", "origin", "HEAD"]);
+    await git(agenticsRepoDir, ["push", "-u", "origin", "HEAD"]);
   }
 
   await mkdir(upstreamDir, { recursive: true });
   await writeFile(join(upstreamDir, "SKILL.md"), "# New\n");
 
-  return { libraryDir, remoteDir, upstreamDir };
+  return { agenticsRepoDir, remoteDir, upstreamDir };
 }
 
-async function setupBulkUpdateLibrary(
+async function setupBulkUpdateAgenticsRepo(
   context: CliTestContext,
   options: {
     includeSkipped?: boolean;
     pushRemote?: boolean;
   } = {},
-): Promise<BulkUpdateLibrary> {
-  const { libraryDir, remoteDir, upstreamDir } =
-    await setupUpstreamFocusLibrary(context, {
+): Promise<BulkUpdateAgenticsRepo> {
+  const { agenticsRepoDir, remoteDir, upstreamDir } =
+    await setupUpstreamFocusAgenticsRepo(context, {
       pushRemote: options.pushRemote,
     });
   const upstreamPlanDir = join(context.rootDir, "upstream-plan");
@@ -194,28 +194,28 @@ async function setupBulkUpdateLibrary(
     };
   }
 
-  await mkdir(join(libraryDir, "prompts", "plan"), { recursive: true });
-  await writeFile(join(libraryDir, "prompts", "plan", "plan.md"), "Old plan\n");
+  await mkdir(join(agenticsRepoDir, "prompts", "plan"), { recursive: true });
+  await writeFile(join(agenticsRepoDir, "prompts", "plan", "plan.md"), "Old plan\n");
   if (options.includeSkipped) {
-    await mkdir(join(libraryDir, "prompts", "scratch"), { recursive: true });
+    await mkdir(join(agenticsRepoDir, "prompts", "scratch"), { recursive: true });
     await writeFile(
-      join(libraryDir, "prompts", "scratch", "scratch.md"),
+      join(agenticsRepoDir, "prompts", "scratch", "scratch.md"),
       "Draft\n",
     );
   }
   await mkdir(upstreamPlanDir, { recursive: true });
   await writeFile(join(upstreamPlanDir, "plan.md"), "New plan\n");
   await writeFile(
-    join(libraryDir, "index.json"),
+    join(agenticsRepoDir, "index.json"),
     JSON.stringify(catalog, null, 2),
   );
-  await git(libraryDir, ["add", "."]);
-  await git(libraryDir, ["commit", "-m", "add bulk fixtures"]);
+  await git(agenticsRepoDir, ["add", "."]);
+  await git(agenticsRepoDir, ["commit", "-m", "add bulk fixtures"]);
   if (options.pushRemote ?? true) {
-    await git(libraryDir, ["push"]);
+    await git(agenticsRepoDir, ["push"]);
   }
 
-  return { libraryDir, remoteDir, upstreamDir, upstreamPlanDir };
+  return { agenticsRepoDir, remoteDir, upstreamDir, upstreamPlanDir };
 }
 
 function installedFocusSkillPath(
@@ -278,12 +278,12 @@ afterEach(async () => {
 describe("jawfish CLI", () => {
   test("adds a catalog skill to the current project for the default tool", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
 
-    await createGitRepository(libraryDir);
-    await mkdir(join(libraryDir, "skills", "focus"), { recursive: true });
+    await createGitRepository(agenticsRepoDir);
+    await mkdir(join(agenticsRepoDir, "skills", "focus"), { recursive: true });
     await writeFile(
-      join(libraryDir, "catalog.json"),
+      join(agenticsRepoDir, "catalog.json"),
       JSON.stringify(
         {
           jawfish: {
@@ -299,10 +299,10 @@ describe("jawfish CLI", () => {
       ),
     );
     await writeFile(
-      join(libraryDir, "skills", "focus", "SKILL.md"),
+      join(agenticsRepoDir, "skills", "focus", "SKILL.md"),
       "# Focus\n\nUse focused execution.\n",
     );
-    await writeJawfishConfig(context, libraryDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
 
     const result = await runJawfish(context, ["add", "focus"]);
 
@@ -332,11 +332,11 @@ describe("jawfish CLI", () => {
   test("install and i with a target add the agentic", async () => {
     for (const command of ["install", "i"]) {
       const context = await setup();
-      const libraryDir = join(context.rootDir, "content-library");
+      const agenticsRepoDir = join(context.rootDir, "agentics");
 
-      await createGitRepository(libraryDir);
-      await writeIndexedFocusSkill(libraryDir);
-      await writeJawfishConfig(context, libraryDir);
+      await createGitRepository(agenticsRepoDir);
+      await writeIndexedFocusSkill(agenticsRepoDir);
+      await writeJawfishConfig(context, agenticsRepoDir);
 
       const result = await runJawfish(context, [command, "focus"]);
 
@@ -359,11 +359,11 @@ describe("jawfish CLI", () => {
 
   test("i without a target installs the manifest", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
 
-    await createGitRepository(libraryDir);
-    await writeIndexedFocusSkill(libraryDir);
-    await writeJawfishConfig(context, libraryDir);
+    await createGitRepository(agenticsRepoDir);
+    await writeIndexedFocusSkill(agenticsRepoDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
     await writeFile(
       join(context.projectDir, "jawfish.json"),
       JSON.stringify({ jawfish: { focus: { tool: "codex" } } }, null, 2),
@@ -391,7 +391,7 @@ describe("jawfish CLI", () => {
       "pi",
     ] as const) {
       const context = await setup();
-      const libraryDir = join(context.rootDir, "content-library");
+      const agenticsRepoDir = join(context.rootDir, "agentics");
       const codexHome = join(context.rootDir, "codex-home");
       const env: Record<string, string> =
         tool === "codex" ? { CODEX_HOME: codexHome } : {};
@@ -408,9 +408,9 @@ describe("jawfish CLI", () => {
         codexHome,
       );
 
-      await createGitRepository(libraryDir);
-      await writeIndexedFocusSkill(libraryDir);
-      await writeJawfishConfig(context, libraryDir, tool);
+      await createGitRepository(agenticsRepoDir);
+      await writeIndexedFocusSkill(agenticsRepoDir);
+      await writeJawfishConfig(context, agenticsRepoDir, tool);
 
       const projectResult = await runJawfish(context, ["add", "focus"], {
         env,
@@ -446,7 +446,7 @@ describe("jawfish CLI", () => {
 
   test("removing one scope preserves the other scope and unmanaged files", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
     const codexHome = join(context.rootDir, "codex-home");
     const env = { CODEX_HOME: codexHome };
     const projectSkill = join(
@@ -459,9 +459,9 @@ describe("jawfish CLI", () => {
     const globalSkill = join(codexHome, "skills", "focus", "SKILL.md");
     const globalNotes = join(codexHome, "skills", "focus", "notes.md");
 
-    await createGitRepository(libraryDir);
-    await writeIndexedFocusSkill(libraryDir);
-    await writeJawfishConfig(context, libraryDir);
+    await createGitRepository(agenticsRepoDir);
+    await writeIndexedFocusSkill(agenticsRepoDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
     assert.equal(
       (await runJawfish(context, ["add", "focus"], { env })).exitCode,
       0,
@@ -495,15 +495,15 @@ describe("jawfish CLI", () => {
 
   test("imports global skills from a supported tool with yes", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
-    const remoteDir = join(context.rootDir, "content-library.git");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
+    const remoteDir = join(context.rootDir, "agentics.git");
     const codexHome = join(context.rootDir, "codex-home");
 
-    await createGitRepository(libraryDir);
+    await createGitRepository(agenticsRepoDir);
     await createBareRemote(remoteDir);
-    await git(libraryDir, ["remote", "add", "origin", remoteDir]);
-    await git(libraryDir, ["push", "-u", "origin", "HEAD"]);
-    await writeJawfishConfig(context, libraryDir);
+    await git(agenticsRepoDir, ["remote", "add", "origin", remoteDir]);
+    await git(agenticsRepoDir, ["push", "-u", "origin", "HEAD"]);
+    await writeJawfishConfig(context, agenticsRepoDir);
     await mkdir(join(codexHome, "skills", "focus"), { recursive: true });
     await writeFile(
       join(codexHome, "skills", "focus", "SKILL.md"),
@@ -520,11 +520,11 @@ describe("jawfish CLI", () => {
     assert.match(result.stdout, /import: focus/);
     assert.match(result.stdout, /Imported 1 skills from codex/);
     assert.equal(
-      await readFile(join(libraryDir, "skills", "focus", "SKILL.md"), "utf8"),
+      await readFile(join(agenticsRepoDir, "skills", "focus", "SKILL.md"), "utf8"),
       "# Focus\n",
     );
     assert.deepEqual(
-      JSON.parse(await readFile(join(libraryDir, "index.json"), "utf8")),
+      JSON.parse(await readFile(join(agenticsRepoDir, "index.json"), "utf8")),
       {
         focus: {
           description: "",
@@ -556,7 +556,7 @@ describe("jawfish CLI", () => {
   test("imports global skills from every supported provider", async () => {
     for (const tool of defaultSupportedTools) {
       const context = await setup();
-      const libraryDir = join(context.rootDir, `content-library-${tool}`);
+      const agenticsRepoDir = join(context.rootDir, `agentics-${tool}`);
       const codexHome = join(context.rootDir, "codex-home");
       const env: Record<string, string> =
         tool === "codex" ? { CODEX_HOME: codexHome } : {};
@@ -564,8 +564,8 @@ describe("jawfish CLI", () => {
         installedFocusSkillPath(context, tool, "global", codexHome),
       );
 
-      await createGitRepository(libraryDir);
-      await writeJawfishConfig(context, libraryDir);
+      await createGitRepository(agenticsRepoDir);
+      await writeJawfishConfig(context, agenticsRepoDir);
       await mkdir(providerSkillDir, { recursive: true });
       await writeFile(join(providerSkillDir, "SKILL.md"), `# ${tool}\n`);
 
@@ -597,14 +597,14 @@ describe("jawfish CLI", () => {
     }
   });
 
-  test("strips provider managed markers from imported library packages", async () => {
+  test("strips provider managed markers from imported repo packages", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
     const codexHome = join(context.rootDir, "codex-home");
     const providerSkillDir = join(codexHome, "skills", "focus");
 
-    await createGitRepository(libraryDir);
-    await writeJawfishConfig(context, libraryDir);
+    await createGitRepository(agenticsRepoDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
     await mkdir(providerSkillDir, { recursive: true });
     await writeFile(join(providerSkillDir, "SKILL.md"), "# Focus\n");
     await writeFile(
@@ -630,7 +630,7 @@ describe("jawfish CLI", () => {
     assert.equal(result.exitCode, 0, result.stderr);
     await assert.rejects(
       readFile(
-        join(libraryDir, "skills", "focus", ".jawfish-managed.json"),
+        join(agenticsRepoDir, "skills", "focus", ".jawfish-managed.json"),
         "utf8",
       ),
       { code: "ENOENT" },
@@ -653,11 +653,11 @@ describe("jawfish CLI", () => {
 
   test("reports empty provider skill directories without writes", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
     const codexHome = join(context.rootDir, "codex-home");
 
-    await createGitRepository(libraryDir);
-    await writeJawfishConfig(context, libraryDir);
+    await createGitRepository(agenticsRepoDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
     await mkdir(join(codexHome, "skills"), { recursive: true });
 
     const result = await runJawfish(
@@ -668,7 +668,7 @@ describe("jawfish CLI", () => {
 
     assert.equal(result.exitCode, 0, result.stderr);
     assert.match(result.stdout, /No importable skills found/);
-    await assert.rejects(readFile(join(libraryDir, "index.json"), "utf8"), {
+    await assert.rejects(readFile(join(agenticsRepoDir, "index.json"), "utf8"), {
       code: "ENOENT",
     });
     await assert.rejects(
@@ -679,10 +679,10 @@ describe("jawfish CLI", () => {
 
   test("fails unsupported provider imports with supported tools", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
 
-    await createGitRepository(libraryDir);
-    await writeJawfishConfig(context, libraryDir);
+    await createGitRepository(agenticsRepoDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
 
     const result = await runJawfish(context, [
       "import-skills",
@@ -700,18 +700,18 @@ describe("jawfish CLI", () => {
 
   test("skips import conflicts", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
-    const remoteDir = join(context.rootDir, "content-library.git");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
+    const remoteDir = join(context.rootDir, "agentics.git");
     const codexHome = join(context.rootDir, "codex-home");
 
-    await createGitRepository(libraryDir);
+    await createGitRepository(agenticsRepoDir);
     await createBareRemote(remoteDir);
-    await git(libraryDir, ["remote", "add", "origin", remoteDir]);
-    await writeIndexedFocusSkill(libraryDir);
-    await git(libraryDir, ["add", "."]);
-    await git(libraryDir, ["commit", "-m", "add focus"]);
-    await git(libraryDir, ["push", "-u", "origin", "HEAD"]);
-    await writeJawfishConfig(context, libraryDir);
+    await git(agenticsRepoDir, ["remote", "add", "origin", remoteDir]);
+    await writeIndexedFocusSkill(agenticsRepoDir);
+    await git(agenticsRepoDir, ["add", "."]);
+    await git(agenticsRepoDir, ["commit", "-m", "add focus"]);
+    await git(agenticsRepoDir, ["push", "-u", "origin", "HEAD"]);
+    await writeJawfishConfig(context, agenticsRepoDir);
     await mkdir(join(codexHome, "skills", "focus"), { recursive: true });
     await writeFile(
       join(codexHome, "skills", "focus", "SKILL.md"),
@@ -728,18 +728,18 @@ describe("jawfish CLI", () => {
     assert.match(result.stdout, /import: none/);
     assert.match(result.stdout, /conflicts: focus/);
     assert.equal(
-      await readFile(join(libraryDir, "skills", "focus", "SKILL.md"), "utf8"),
+      await readFile(join(agenticsRepoDir, "skills", "focus", "SKILL.md"), "utf8"),
       "# Focus\n\nUse focused execution.\n",
     );
   });
 
   test("accepts any supported default tool without allowlist config", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
 
-    await createGitRepository(libraryDir);
-    await writeIndexedFocusSkill(libraryDir);
-    await writeJawfishConfig(context, libraryDir, "hermes");
+    await createGitRepository(agenticsRepoDir);
+    await writeIndexedFocusSkill(agenticsRepoDir);
+    await writeJawfishConfig(context, agenticsRepoDir, "hermes");
 
     const result = await runJawfish(context, ["add", "focus"]);
 
@@ -754,11 +754,11 @@ describe("jawfish CLI", () => {
 
   test("fails when manifest tool is unsupported", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
 
-    await createGitRepository(libraryDir);
-    await writeIndexedFocusSkill(libraryDir);
-    await writeJawfishConfig(context, libraryDir, "codex");
+    await createGitRepository(agenticsRepoDir);
+    await writeIndexedFocusSkill(agenticsRepoDir);
+    await writeJawfishConfig(context, agenticsRepoDir, "codex");
     await writeFile(
       join(context.projectDir, "jawfish.json"),
       JSON.stringify({ jawfish: { focus: { tool: "unknown" } } }, null, 2),
@@ -776,7 +776,7 @@ describe("jawfish CLI", () => {
 
   test("install with a missing catalog entry aborts before writing managed files", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
     const installedSkill = join(
       context.projectDir,
       ".codex",
@@ -785,16 +785,16 @@ describe("jawfish CLI", () => {
       "SKILL.md",
     );
 
-    await createGitRepository(libraryDir);
-    await writeIndexedFocusSkill(libraryDir);
-    await writeJawfishConfig(context, libraryDir);
+    await createGitRepository(agenticsRepoDir);
+    await writeIndexedFocusSkill(agenticsRepoDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
     await writeFile(
       join(context.projectDir, "jawfish.json"),
       JSON.stringify({ jawfish: { focus: { tool: "codex" } } }, null, 2),
     );
     const firstInstall = await runJawfish(context, ["install"]);
     assert.equal(firstInstall.exitCode, 0, firstInstall.stderr);
-    await writeFile(join(libraryDir, "skills", "focus", "SKILL.md"), "# New\n");
+    await writeFile(join(agenticsRepoDir, "skills", "focus", "SKILL.md"), "# New\n");
     await writeFile(
       join(context.projectDir, "jawfish.json"),
       JSON.stringify(
@@ -821,11 +821,11 @@ describe("jawfish CLI", () => {
 
   test("fails with a clear error for unsupported config defaultTool", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
 
-    await createGitRepository(libraryDir);
-    await writeIndexedFocusSkill(libraryDir);
-    await writeJawfishConfig(context, libraryDir, "unknown");
+    await createGitRepository(agenticsRepoDir);
+    await writeIndexedFocusSkill(agenticsRepoDir);
+    await writeJawfishConfig(context, agenticsRepoDir, "unknown");
 
     const result = await runJawfish(context, ["add", "focus"]);
 
@@ -840,18 +840,18 @@ describe("jawfish CLI", () => {
   test("installs native prompt files for opencode and pi", async () => {
     for (const tool of ["opencode", "pi"] as const) {
       const context = await setup();
-      const libraryDir = join(context.rootDir, "content-library");
+      const agenticsRepoDir = join(context.rootDir, "agentics");
       const nativePromptPath =
         tool === "opencode"
           ? join(context.projectDir, ".opencode", "commands", "review.md")
           : join(context.projectDir, ".pi", "prompts", "review.md");
 
-      await createGitRepository(libraryDir);
-      await mkdir(join(libraryDir, "prompts", "review"), {
+      await createGitRepository(agenticsRepoDir);
+      await mkdir(join(agenticsRepoDir, "prompts", "review"), {
         recursive: true,
       });
       await writeFile(
-        join(libraryDir, "index.json"),
+        join(agenticsRepoDir, "index.json"),
         JSON.stringify(
           {
             review: {
@@ -865,10 +865,10 @@ describe("jawfish CLI", () => {
         ),
       );
       await writeFile(
-        join(libraryDir, "prompts", "review", "review.md"),
+        join(agenticsRepoDir, "prompts", "review", "review.md"),
         "# Review\n",
       );
-      await writeJawfishConfig(context, libraryDir, tool);
+      await writeJawfishConfig(context, agenticsRepoDir, tool);
 
       const result = await runJawfish(context, ["add", "review"]);
 
@@ -913,14 +913,14 @@ describe("jawfish CLI", () => {
 
   test("rejects non-skill packages for openclaw", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
 
-    await createGitRepository(libraryDir);
-    await mkdir(join(libraryDir, "prompts", "review"), {
+    await createGitRepository(agenticsRepoDir);
+    await mkdir(join(agenticsRepoDir, "prompts", "review"), {
       recursive: true,
     });
     await writeFile(
-      join(libraryDir, "index.json"),
+      join(agenticsRepoDir, "index.json"),
       JSON.stringify(
         {
           review: {
@@ -934,10 +934,10 @@ describe("jawfish CLI", () => {
       ),
     );
     await writeFile(
-      join(libraryDir, "prompts", "review", "review.md"),
+      join(agenticsRepoDir, "prompts", "review", "review.md"),
       "# Review\n",
     );
-    await writeJawfishConfig(context, libraryDir, "openclaw");
+    await writeJawfishConfig(context, agenticsRepoDir, "openclaw");
 
     const result = await runJawfish(context, ["add", "review"]);
 
@@ -947,12 +947,12 @@ describe("jawfish CLI", () => {
 
   test("installs and removes project manifest jawfish", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
 
-    await createGitRepository(libraryDir);
-    await mkdir(join(libraryDir, "skills", "focus"), { recursive: true });
+    await createGitRepository(agenticsRepoDir);
+    await mkdir(join(agenticsRepoDir, "skills", "focus"), { recursive: true });
     await writeFile(
-      join(libraryDir, "catalog.json"),
+      join(agenticsRepoDir, "catalog.json"),
       JSON.stringify(
         {
           jawfish: {
@@ -968,10 +968,10 @@ describe("jawfish CLI", () => {
       ),
     );
     await writeFile(
-      join(libraryDir, "skills", "focus", "SKILL.md"),
+      join(agenticsRepoDir, "skills", "focus", "SKILL.md"),
       "# Focus\n",
     );
-    await writeJawfishConfig(context, libraryDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
     await writeFile(
       join(context.projectDir, "jawfish.json"),
       JSON.stringify({ jawfish: { focus: { tool: "codex" } } }, null, 2),
@@ -1008,13 +1008,13 @@ describe("jawfish CLI", () => {
 
   test("reinstall overwrites managed files, removes stale managed files, and preserves unmanaged files", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
     const installDir = join(context.projectDir, ".codex", "skills", "focus");
 
-    await createGitRepository(libraryDir);
-    await writeIndexedFocusSkill(libraryDir);
-    await writeFile(join(libraryDir, "skills", "focus", "old.md"), "old\n");
-    await writeJawfishConfig(context, libraryDir);
+    await createGitRepository(agenticsRepoDir);
+    await writeIndexedFocusSkill(agenticsRepoDir);
+    await writeFile(join(agenticsRepoDir, "skills", "focus", "old.md"), "old\n");
+    await writeJawfishConfig(context, agenticsRepoDir);
     await writeFile(
       join(context.projectDir, "jawfish.json"),
       JSON.stringify({ jawfish: { focus: { tool: "codex" } } }, null, 2),
@@ -1026,10 +1026,10 @@ describe("jawfish CLI", () => {
     await rm(join(installDir, "SKILL.md"));
     await writeFile(join(installDir, "user.md"), "manual\n");
     await writeFile(
-      join(libraryDir, "skills", "focus", "SKILL.md"),
+      join(agenticsRepoDir, "skills", "focus", "SKILL.md"),
       "# New Focus\n",
     );
-    await rm(join(libraryDir, "skills", "focus", "old.md"));
+    await rm(join(agenticsRepoDir, "skills", "focus", "old.md"));
 
     const reinstall = await runJawfish(context, ["install"]);
 
@@ -1050,12 +1050,12 @@ describe("jawfish CLI", () => {
 
   test("install aborts when source files conflict with unmanaged destination files", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
     const installDir = join(context.projectDir, ".codex", "skills", "focus");
 
-    await createGitRepository(libraryDir);
-    await writeIndexedFocusSkill(libraryDir);
-    await writeJawfishConfig(context, libraryDir);
+    await createGitRepository(agenticsRepoDir);
+    await writeIndexedFocusSkill(agenticsRepoDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
     await writeFile(
       join(context.projectDir, "jawfish.json"),
       JSON.stringify({ jawfish: { focus: { tool: "codex" } } }, null, 2),
@@ -1063,7 +1063,7 @@ describe("jawfish CLI", () => {
     await runJawfish(context, ["install"]);
     await writeFile(join(installDir, "notes.md"), "manual\n");
     await writeFile(
-      join(libraryDir, "skills", "focus", "notes.md"),
+      join(agenticsRepoDir, "skills", "focus", "notes.md"),
       "managed\n",
     );
 
@@ -1080,12 +1080,12 @@ describe("jawfish CLI", () => {
 
   test("remove deletes managed files and manifest entries while preserving unmanaged files", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
     const installDir = join(context.projectDir, ".codex", "skills", "focus");
 
-    await createGitRepository(libraryDir);
-    await writeIndexedFocusSkill(libraryDir);
-    await writeJawfishConfig(context, libraryDir);
+    await createGitRepository(agenticsRepoDir);
+    await writeIndexedFocusSkill(agenticsRepoDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
     await writeFile(
       join(context.projectDir, "jawfish.json"),
       JSON.stringify({ jawfish: { focus: { tool: "codex" } } }, null, 2),
@@ -1116,20 +1116,20 @@ describe("jawfish CLI", () => {
     );
   });
 
-  test("imports a local prompt package, pushes the library, and installs it", async () => {
+  test("imports a local prompt package, pushes the repo, and installs it", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
-    const remoteDir = join(context.rootDir, "content-library.git");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
+    const remoteDir = join(context.rootDir, "agentics.git");
     const sourceDir = join(context.rootDir, "daily-brief");
 
-    await createGitRepository(libraryDir);
+    await createGitRepository(agenticsRepoDir);
     await createBareRemote(remoteDir);
-    await git(libraryDir, ["remote", "add", "origin", remoteDir]);
-    await git(libraryDir, ["push", "-u", "origin", "HEAD"]);
+    await git(agenticsRepoDir, ["remote", "add", "origin", remoteDir]);
+    await git(agenticsRepoDir, ["push", "-u", "origin", "HEAD"]);
     await mkdir(sourceDir, { recursive: true });
     await writeFile(join(sourceDir, "brief.md"), "Summarize today's work.\n");
     await writeFile(join(sourceDir, "notes.txt"), "Keep it concise.\n");
-    await writeJawfishConfig(context, libraryDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
 
     const result = await runJawfish(context, [
       "add",
@@ -1151,7 +1151,7 @@ describe("jawfish CLI", () => {
       "Keep it concise.\n",
     );
     assert.deepEqual(
-      JSON.parse(await readFile(join(libraryDir, "index.json"), "utf8")),
+      JSON.parse(await readFile(join(agenticsRepoDir, "index.json"), "utf8")),
       {
         "daily-brief": {
           description: "",
@@ -1162,20 +1162,20 @@ describe("jawfish CLI", () => {
       },
     );
 
-    const localHead = await git(libraryDir, ["rev-parse", "HEAD"]);
+    const localHead = await git(agenticsRepoDir, ["rev-parse", "HEAD"]);
     const remoteHead = await git(remoteDir, ["rev-parse", "HEAD"]);
     assert.equal(localHead.stdout, remoteHead.stdout);
   });
 
-  test("imports into a local git library without a push destination", async () => {
+  test("imports into a local git repo without a push destination", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
     const sourceDir = join(context.rootDir, "focus");
 
-    await createGitRepository(libraryDir);
+    await createGitRepository(agenticsRepoDir);
     await mkdir(sourceDir, { recursive: true });
     await writeFile(join(sourceDir, "SKILL.md"), "# Focus\n");
-    await writeJawfishConfig(context, libraryDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
 
     const result = await runJawfish(context, ["add", sourceDir]);
 
@@ -1195,7 +1195,7 @@ describe("jawfish CLI", () => {
       { jawfish: { focus: { tool: "codex" } } },
     );
     assert.deepEqual(
-      JSON.parse(await readFile(join(libraryDir, "index.json"), "utf8")),
+      JSON.parse(await readFile(join(agenticsRepoDir, "index.json"), "utf8")),
       {
         focus: {
           description: "",
@@ -1209,13 +1209,13 @@ describe("jawfish CLI", () => {
 
   test("reuses a renamed local source when installing another scope", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
     const sourceDir = join(context.rootDir, "focus");
 
-    await createGitRepository(libraryDir);
+    await createGitRepository(agenticsRepoDir);
     await mkdir(sourceDir, { recursive: true });
     await writeFile(join(sourceDir, "SKILL.md"), "# Focus\n");
-    await writeJawfishConfig(context, libraryDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
 
     const projectResult = await runJawfish(context, [
       "add",
@@ -1229,7 +1229,7 @@ describe("jawfish CLI", () => {
 
     assert.equal(globalResult.exitCode, 0, globalResult.stderr);
     assert.match(globalResult.stdout, /Added renamed-focus to global/);
-    await assertJsonFile(join(libraryDir, "index.json"), {
+    await assertJsonFile(join(agenticsRepoDir, "index.json"), {
       "renamed-focus": {
         description: "",
         path: "skills/renamed-focus",
@@ -1240,23 +1240,23 @@ describe("jawfish CLI", () => {
     await assertCodexScopeConfigs(context, "renamed-focus");
   });
 
-  test("imports a URL file parent package, pushes the library, and installs it", async () => {
+  test("imports a URL file parent package, pushes the repo, and installs it", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
-    const remoteDir = join(context.rootDir, "content-library.git");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
+    const remoteDir = join(context.rootDir, "agentics.git");
     const sourceDir = join(context.rootDir, "upstream-focus");
 
-    await createGitRepository(libraryDir);
+    await createGitRepository(agenticsRepoDir);
     await createBareRemote(remoteDir);
-    await git(libraryDir, ["remote", "add", "origin", remoteDir]);
-    await git(libraryDir, ["push", "-u", "origin", "HEAD"]);
+    await git(agenticsRepoDir, ["remote", "add", "origin", remoteDir]);
+    await git(agenticsRepoDir, ["push", "-u", "origin", "HEAD"]);
     await mkdir(sourceDir, { recursive: true });
     await writeFile(join(sourceDir, "SKILL.md"), "# Focus\n");
     await writeFile(
       join(sourceDir, "references.md"),
       "Use deep work blocks.\n",
     );
-    await writeJawfishConfig(context, libraryDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
 
     const server = await serveStaticDirectory(context.rootDir);
     const sourceUrl = `${server.url}/upstream-focus/SKILL.md`;
@@ -1277,7 +1277,7 @@ describe("jawfish CLI", () => {
         ),
         "Use deep work blocks.\n",
       );
-      await assertJsonFile(join(libraryDir, "index.json"), {
+      await assertJsonFile(join(agenticsRepoDir, "index.json"), {
         "upstream-focus": {
           description: "",
           path: "skills/upstream-focus",
@@ -1286,7 +1286,7 @@ describe("jawfish CLI", () => {
         },
       });
 
-      const localHead = await git(libraryDir, ["rev-parse", "HEAD"]);
+      const localHead = await git(agenticsRepoDir, ["rev-parse", "HEAD"]);
       const remoteHead = await git(remoteDir, ["rev-parse", "HEAD"]);
       assert.equal(localHead.stdout, remoteHead.stdout);
     } finally {
@@ -1296,13 +1296,13 @@ describe("jawfish CLI", () => {
 
   test("reuses a renamed URL file source when installing another scope", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
     const sourceDir = join(context.rootDir, "upstream-focus");
 
-    await createGitRepository(libraryDir);
+    await createGitRepository(agenticsRepoDir);
     await mkdir(sourceDir, { recursive: true });
     await writeFile(join(sourceDir, "SKILL.md"), "# Focus\n");
-    await writeJawfishConfig(context, libraryDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
 
     const server = await serveStaticDirectory(context.rootDir);
     const sourceUrl = `${server.url}/upstream-focus/SKILL.md`;
@@ -1319,7 +1319,7 @@ describe("jawfish CLI", () => {
 
       assert.equal(globalResult.exitCode, 0, globalResult.stderr);
       assert.match(globalResult.stdout, /Added renamed-url-focus to global/);
-      await assertJsonFile(join(libraryDir, "index.json"), {
+      await assertJsonFile(join(agenticsRepoDir, "index.json"), {
         "renamed-url-focus": {
           description: "",
           path: "skills/renamed-url-focus",
@@ -1335,14 +1335,14 @@ describe("jawfish CLI", () => {
 
   test("imports a URL file when the parent URL cannot be listed", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
-    const remoteDir = join(context.rootDir, "content-library.git");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
+    const remoteDir = join(context.rootDir, "agentics.git");
 
-    await createGitRepository(libraryDir);
+    await createGitRepository(agenticsRepoDir);
     await createBareRemote(remoteDir);
-    await git(libraryDir, ["remote", "add", "origin", remoteDir]);
-    await git(libraryDir, ["push", "-u", "origin", "HEAD"]);
-    await writeJawfishConfig(context, libraryDir);
+    await git(agenticsRepoDir, ["remote", "add", "origin", remoteDir]);
+    await git(agenticsRepoDir, ["push", "-u", "origin", "HEAD"]);
+    await writeJawfishConfig(context, agenticsRepoDir);
 
     const server = createServer((request, response) => {
       if (request.url === "/upstream-focus/SKILL.md") {
@@ -1398,18 +1398,18 @@ describe("jawfish CLI", () => {
 
   test("imports a URL directory package with agent type inference", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
-    const remoteDir = join(context.rootDir, "content-library.git");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
+    const remoteDir = join(context.rootDir, "agentics.git");
     const sourceDir = join(context.rootDir, "review-agent");
 
-    await createGitRepository(libraryDir);
+    await createGitRepository(agenticsRepoDir);
     await createBareRemote(remoteDir);
-    await git(libraryDir, ["remote", "add", "origin", remoteDir]);
-    await git(libraryDir, ["push", "-u", "origin", "HEAD"]);
+    await git(agenticsRepoDir, ["remote", "add", "origin", remoteDir]);
+    await git(agenticsRepoDir, ["push", "-u", "origin", "HEAD"]);
     await mkdir(sourceDir, { recursive: true });
     await writeFile(join(sourceDir, "AGENT.md"), "# Review Agent\n");
     await writeFile(join(sourceDir, "checklist.md"), "Check tests.\n");
-    await writeJawfishConfig(context, libraryDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
 
     const server = await serveStaticDirectory(context.rootDir);
     const sourceUrl = `${server.url}/review-agent`;
@@ -1434,7 +1434,7 @@ describe("jawfish CLI", () => {
         ),
         "Check tests.\n",
       );
-      await assertJsonFile(join(libraryDir, "index.json"), {
+      await assertJsonFile(join(agenticsRepoDir, "index.json"), {
         "review-agent": {
           description: "",
           path: "agents/review-agent",
@@ -1450,10 +1450,10 @@ describe("jawfish CLI", () => {
 
   test("failed URL source imports leave no catalog entry", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
 
-    await createGitRepository(libraryDir);
-    await writeJawfishConfig(context, libraryDir);
+    await createGitRepository(agenticsRepoDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
 
     const server = createServer((_request, response) => {
       response.writeHead(500, { "content-type": "text/plain" });
@@ -1474,7 +1474,7 @@ describe("jawfish CLI", () => {
       assert.equal(result.exitCode, 1);
       assert.match(result.stderr, /Failed to fetch .*500 Internal Server Error/);
       await assert.rejects(
-        readFile(join(libraryDir, "index.json"), "utf8"),
+        readFile(join(agenticsRepoDir, "index.json"), "utf8"),
         /ENOENT/,
       );
     } finally {
@@ -1527,18 +1527,18 @@ describe("jawfish CLI", () => {
 
   test("imports an ambiguous local package with selected type and name override", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
-    const remoteDir = join(context.rootDir, "content-library.git");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
+    const remoteDir = join(context.rootDir, "agentics.git");
     const sourceDir = join(context.rootDir, "scratch-agent");
 
-    await createGitRepository(libraryDir);
+    await createGitRepository(agenticsRepoDir);
     await createBareRemote(remoteDir);
-    await git(libraryDir, ["remote", "add", "origin", remoteDir]);
-    await git(libraryDir, ["push", "-u", "origin", "HEAD"]);
+    await git(agenticsRepoDir, ["remote", "add", "origin", remoteDir]);
+    await git(agenticsRepoDir, ["push", "-u", "origin", "HEAD"]);
     await mkdir(sourceDir, { recursive: true });
     await writeFile(join(sourceDir, "README.md"), "# Scratch\n");
     await writeFile(join(sourceDir, "notes.txt"), "Act carefully.\n");
-    await writeJawfishConfig(context, libraryDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
 
     const result = await runJawfish(
       context,
@@ -1561,7 +1561,7 @@ describe("jawfish CLI", () => {
       "Act carefully.\n",
     );
     assert.deepEqual(
-      JSON.parse(await readFile(join(libraryDir, "index.json"), "utf8")),
+      JSON.parse(await readFile(join(agenticsRepoDir, "index.json"), "utf8")),
       {
         "careful-agent": {
           description: "",
@@ -1575,11 +1575,11 @@ describe("jawfish CLI", () => {
 
   test("updates an upstream package, removes stale files, pushes, and reinstalls", async () => {
     const context = await setup();
-    const { libraryDir, remoteDir } = await setupUpstreamFocusLibrary(context, {
+    const { agenticsRepoDir, remoteDir } = await setupUpstreamFocusAgenticsRepo(context, {
       catalogFile: "catalog.json",
       staleFile: true,
     });
-    await writeJawfishConfig(context, libraryDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
     await writeFile(
       join(context.projectDir, "jawfish.json"),
       JSON.stringify({ jawfish: { focus: { tool: "codex" } } }, null, 2),
@@ -1615,21 +1615,21 @@ describe("jawfish CLI", () => {
       "manual\n",
     );
     await assert.rejects(
-      readFile(join(libraryDir, "skills", "focus", "stale.md"), "utf8"),
+      readFile(join(agenticsRepoDir, "skills", "focus", "stale.md"), "utf8"),
       /ENOENT/,
     );
-    const localHead = await git(libraryDir, ["rev-parse", "HEAD"]);
+    const localHead = await git(agenticsRepoDir, ["rev-parse", "HEAD"]);
     const remoteHead = await git(remoteDir, ["rev-parse", "HEAD"]);
     assert.equal(localHead.stdout, remoteHead.stdout);
   });
 
   test("fails to update a package without upstream metadata", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
 
-    await createGitRepository(libraryDir);
-    await writeIndexedFocusSkill(libraryDir);
-    await writeJawfishConfig(context, libraryDir);
+    await createGitRepository(agenticsRepoDir);
+    await writeIndexedFocusSkill(agenticsRepoDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
 
     const result = await runJawfish(context, ["update", "focus"]);
 
@@ -1640,7 +1640,7 @@ describe("jawfish CLI", () => {
   test("updates from a file upstream by replacing with the parent directory", async () => {
     const context = await setup();
     const upstreamDir = join(context.rootDir, "upstream-focus");
-    const { libraryDir } = await setupUpstreamFocusLibrary(context, {
+    const { agenticsRepoDir } = await setupUpstreamFocusAgenticsRepo(context, {
       staleFile: true,
       upstream: join(upstreamDir, "SKILL.md"),
     });
@@ -1648,34 +1648,34 @@ describe("jawfish CLI", () => {
       join(upstreamDir, "references.md"),
       "Use deep work blocks.\n",
     );
-    await writeJawfishConfig(context, libraryDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
 
     const result = await runJawfish(context, ["update", "focus"]);
 
     assert.equal(result.exitCode, 0, result.stderr);
     assert.equal(
       await readFile(
-        join(libraryDir, "skills", "focus", "references.md"),
+        join(agenticsRepoDir, "skills", "focus", "references.md"),
         "utf8",
       ),
       "Use deep work blocks.\n",
     );
     await assert.rejects(
-      readFile(join(libraryDir, "skills", "focus", "stale.md"), "utf8"),
+      readFile(join(agenticsRepoDir, "skills", "focus", "stale.md"), "utf8"),
       /ENOENT/,
     );
   });
 
   test("aborts update when the local package has dirty changes", async () => {
     const context = await setup();
-    const { libraryDir } = await setupUpstreamFocusLibrary(context, {
+    const { agenticsRepoDir } = await setupUpstreamFocusAgenticsRepo(context, {
       pushRemote: false,
     });
     await writeFile(
-      join(libraryDir, "skills", "focus", "SKILL.md"),
+      join(agenticsRepoDir, "skills", "focus", "SKILL.md"),
       "# Dirty\n",
     );
-    await writeJawfishConfig(context, libraryDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
 
     const result = await runJawfish(context, ["update", "focus"]);
 
@@ -1684,31 +1684,31 @@ describe("jawfish CLI", () => {
     assert.match(result.stderr, /skills\/focus\/SKILL\.md/);
     assert.match(result.stderr, /jawfish update --force focus/);
     assert.equal(
-      await readFile(join(libraryDir, "skills", "focus", "SKILL.md"), "utf8"),
+      await readFile(join(agenticsRepoDir, "skills", "focus", "SKILL.md"), "utf8"),
       "# Dirty\n",
     );
   });
 
   test("force flags update a package with dirty local changes", async () => {
     const context = await setup();
-    const { libraryDir, upstreamDir } =
-      await setupUpstreamFocusLibrary(context);
+    const { agenticsRepoDir, upstreamDir } =
+      await setupUpstreamFocusAgenticsRepo(context);
     await writeFile(
-      join(libraryDir, "skills", "focus", "SKILL.md"),
+      join(agenticsRepoDir, "skills", "focus", "SKILL.md"),
       "# Dirty\n",
     );
-    await writeJawfishConfig(context, libraryDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
 
     const result = await runJawfish(context, ["update", "-F", "focus"]);
 
     assert.equal(result.exitCode, 0, result.stderr);
     assert.equal(
-      await readFile(join(libraryDir, "skills", "focus", "SKILL.md"), "utf8"),
+      await readFile(join(agenticsRepoDir, "skills", "focus", "SKILL.md"), "utf8"),
       "# New\n",
     );
 
     await writeFile(
-      join(libraryDir, "skills", "focus", "SKILL.md"),
+      join(agenticsRepoDir, "skills", "focus", "SKILL.md"),
       "# Dirty again\n",
     );
     await writeFile(join(upstreamDir, "SKILL.md"), "# Newer\n");
@@ -1721,42 +1721,42 @@ describe("jawfish CLI", () => {
 
     assert.equal(longFlagResult.exitCode, 0, longFlagResult.stderr);
     assert.equal(
-      await readFile(join(libraryDir, "skills", "focus", "SKILL.md"), "utf8"),
+      await readFile(join(agenticsRepoDir, "skills", "focus", "SKILL.md"), "utf8"),
       "# Newer\n",
     );
   });
 
   test("push failure leaves the update commit intact with recovery guidance", async () => {
     const context = await setup();
-    const { libraryDir, remoteDir } = await setupUpstreamFocusLibrary(context);
+    const { agenticsRepoDir, remoteDir } = await setupUpstreamFocusAgenticsRepo(context);
     await writeFile(
       join(remoteDir, "hooks", "pre-receive"),
       "#!/bin/sh\necho rejected by test >&2\nexit 1\n",
     );
     await chmod(join(remoteDir, "hooks", "pre-receive"), 0o755);
-    await writeJawfishConfig(context, libraryDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
 
     const result = await runJawfish(context, ["update", "focus"]);
 
     assert.equal(result.exitCode, 1);
-    assert.match(result.stderr, /Library commit was created, but push failed/);
+    assert.match(result.stderr, /Agentics repo commit was created, but push failed/);
     assert.match(result.stderr, /rejected by test/);
     assert.match(result.stderr, /git -C .* push/);
 
-    const localHead = await git(libraryDir, ["rev-parse", "HEAD"]);
+    const localHead = await git(agenticsRepoDir, ["rev-parse", "HEAD"]);
     const remoteHead = await git(remoteDir, ["rev-parse", "HEAD"]);
-    const commitMessage = await git(libraryDir, ["log", "-1", "--pretty=%s"]);
+    const commitMessage = await git(agenticsRepoDir, ["log", "-1", "--pretty=%s"]);
     assert.notEqual(localHead.stdout, remoteHead.stdout);
     assert.equal(commitMessage.stdout.trim(), "update focus");
   });
 
   test("update reinstalls only in the selected scope when already installed", async () => {
     const context = await setup();
-    const { libraryDir } = await setupUpstreamFocusLibrary(context);
+    const { agenticsRepoDir } = await setupUpstreamFocusAgenticsRepo(context);
     const codexHome = join(context.rootDir, "codex-home");
     const env = { CODEX_HOME: codexHome };
 
-    await writeJawfishConfig(context, libraryDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
     await writeFile(
       join(context.projectDir, "jawfish.json"),
       JSON.stringify({ jawfish: { focus: { tool: "codex" } } }, null, 2),
@@ -1791,12 +1791,12 @@ describe("jawfish CLI", () => {
 
   test("update aborts before committing when selected reinstall conflicts with unmanaged files", async () => {
     const context = await setup();
-    const { libraryDir, remoteDir, upstreamDir } =
-      await setupUpstreamFocusLibrary(context);
+    const { agenticsRepoDir, remoteDir, upstreamDir } =
+      await setupUpstreamFocusAgenticsRepo(context);
     const installDir = join(context.projectDir, ".codex", "skills", "focus");
 
     await writeFile(join(upstreamDir, "notes.md"), "managed\n");
-    await writeJawfishConfig(context, libraryDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
     await writeFile(
       join(context.projectDir, "jawfish.json"),
       JSON.stringify({ jawfish: { focus: { tool: "codex" } } }, null, 2),
@@ -1804,7 +1804,7 @@ describe("jawfish CLI", () => {
     assert.equal((await runJawfish(context, ["install"])).exitCode, 0);
     await writeFile(join(installDir, "notes.md"), "manual\n");
 
-    const initialHead = await git(libraryDir, ["rev-parse", "HEAD"]);
+    const initialHead = await git(agenticsRepoDir, ["rev-parse", "HEAD"]);
     const initialRemoteHead = await git(remoteDir, ["rev-parse", "HEAD"]);
     const result = await runJawfish(context, ["update", "focus"]);
 
@@ -1815,15 +1815,15 @@ describe("jawfish CLI", () => {
       "manual\n",
     );
     assert.equal(
-      await readFile(join(libraryDir, "skills", "focus", "SKILL.md"), "utf8"),
+      await readFile(join(agenticsRepoDir, "skills", "focus", "SKILL.md"), "utf8"),
       "# Old\n",
     );
     await assert.rejects(
-      readFile(join(libraryDir, "skills", "focus", "notes.md"), "utf8"),
+      readFile(join(agenticsRepoDir, "skills", "focus", "notes.md"), "utf8"),
       /ENOENT/,
     );
     assert.equal(
-      (await git(libraryDir, ["rev-parse", "HEAD"])).stdout,
+      (await git(agenticsRepoDir, ["rev-parse", "HEAD"])).stdout,
       initialHead.stdout,
     );
     assert.equal(
@@ -1834,10 +1834,10 @@ describe("jawfish CLI", () => {
 
   test("bulk update reports updated and skipped packages", async () => {
     const context = await setup();
-    const { libraryDir } = await setupBulkUpdateLibrary(context, {
+    const { agenticsRepoDir } = await setupBulkUpdateAgenticsRepo(context, {
       includeSkipped: true,
     });
-    await writeJawfishConfig(context, libraryDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
 
     const result = await runJawfish(context, ["update"]);
 
@@ -1846,41 +1846,41 @@ describe("jawfish CLI", () => {
     assert.match(result.stdout, /Skipped: scratch/);
     assert.match(result.stdout, /Failed: none/);
     assert.equal(
-      await readFile(join(libraryDir, "skills", "focus", "SKILL.md"), "utf8"),
+      await readFile(join(agenticsRepoDir, "skills", "focus", "SKILL.md"), "utf8"),
       "# New\n",
     );
     assert.equal(
-      await readFile(join(libraryDir, "prompts", "plan", "plan.md"), "utf8"),
+      await readFile(join(agenticsRepoDir, "prompts", "plan", "plan.md"), "utf8"),
       "New plan\n",
     );
   });
 
   test("bulk update commits and pushes all upstream packages", async () => {
     const context = await setup();
-    const { libraryDir, remoteDir } = await setupBulkUpdateLibrary(context);
-    await writeJawfishConfig(context, libraryDir);
+    const { agenticsRepoDir, remoteDir } = await setupBulkUpdateAgenticsRepo(context);
+    await writeJawfishConfig(context, agenticsRepoDir);
 
     const result = await runJawfish(context, ["update"]);
 
     assert.equal(result.exitCode, 0, result.stderr);
     assert.match(result.stdout, /Updated: focus, plan/);
     assert.match(result.stdout, /Skipped: none/);
-    const localHead = await git(libraryDir, ["rev-parse", "HEAD"]);
+    const localHead = await git(agenticsRepoDir, ["rev-parse", "HEAD"]);
     const remoteHead = await git(remoteDir, ["rev-parse", "HEAD"]);
-    const commitMessage = await git(libraryDir, ["log", "-1", "--pretty=%s"]);
+    const commitMessage = await git(agenticsRepoDir, ["log", "-1", "--pretty=%s"]);
     assert.equal(localHead.stdout, remoteHead.stdout);
     assert.equal(commitMessage.stdout.trim(), "update jawfish");
   });
 
   test("bulk update reports dirty packages as failed without committing", async () => {
     const context = await setup();
-    const { libraryDir } = await setupBulkUpdateLibrary(context);
-    const initialHead = await git(libraryDir, ["rev-parse", "HEAD"]);
+    const { agenticsRepoDir } = await setupBulkUpdateAgenticsRepo(context);
+    const initialHead = await git(agenticsRepoDir, ["rev-parse", "HEAD"]);
     await writeFile(
-      join(libraryDir, "skills", "focus", "SKILL.md"),
+      join(agenticsRepoDir, "skills", "focus", "SKILL.md"),
       "# Dirty\n",
     );
-    await writeJawfishConfig(context, libraryDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
 
     const result = await runJawfish(context, ["update"]);
 
@@ -1893,21 +1893,21 @@ describe("jawfish CLI", () => {
     assert.match(result.stderr, /skills\/focus\/SKILL\.md/);
     assert.match(result.stderr, /jawfish update --force focus/);
     assert.equal(
-      await readFile(join(libraryDir, "skills", "focus", "SKILL.md"), "utf8"),
+      await readFile(join(agenticsRepoDir, "skills", "focus", "SKILL.md"), "utf8"),
       "# Dirty\n",
     );
-    const finalHead = await git(libraryDir, ["rev-parse", "HEAD"]);
+    const finalHead = await git(agenticsRepoDir, ["rev-parse", "HEAD"]);
     assert.equal(finalHead.stdout, initialHead.stdout);
   });
 
   test("force bulk update replaces dirty packages", async () => {
     const context = await setup();
-    const { libraryDir } = await setupBulkUpdateLibrary(context);
+    const { agenticsRepoDir } = await setupBulkUpdateAgenticsRepo(context);
     await writeFile(
-      join(libraryDir, "skills", "focus", "SKILL.md"),
+      join(agenticsRepoDir, "skills", "focus", "SKILL.md"),
       "# Dirty\n",
     );
-    await writeJawfishConfig(context, libraryDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
 
     const result = await runJawfish(context, ["update", "-F"]);
 
@@ -1915,18 +1915,18 @@ describe("jawfish CLI", () => {
     assert.match(result.stdout, /Updated: focus, plan/);
     assert.match(result.stdout, /Failed: none/);
     assert.equal(
-      await readFile(join(libraryDir, "skills", "focus", "SKILL.md"), "utf8"),
+      await readFile(join(agenticsRepoDir, "skills", "focus", "SKILL.md"), "utf8"),
       "# New\n",
     );
   });
 
   test("bulk update reinstalls updated packages only in the selected scope", async () => {
     const context = await setup();
-    const { libraryDir } = await setupBulkUpdateLibrary(context);
+    const { agenticsRepoDir } = await setupBulkUpdateAgenticsRepo(context);
     const codexHome = join(context.rootDir, "codex-home");
     const env = { CODEX_HOME: codexHome };
 
-    await writeJawfishConfig(context, libraryDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
     await writeFile(
       join(context.projectDir, "jawfish.json"),
       JSON.stringify({ jawfish: { focus: { tool: "codex" } } }, null, 2),
@@ -1959,23 +1959,23 @@ describe("jawfish CLI", () => {
 
   test("bulk push failure leaves the commit intact with recovery guidance", async () => {
     const context = await setup();
-    const { libraryDir, remoteDir } = await setupBulkUpdateLibrary(context);
+    const { agenticsRepoDir, remoteDir } = await setupBulkUpdateAgenticsRepo(context);
     await writeFile(
       join(remoteDir, "hooks", "pre-receive"),
       "#!/bin/sh\necho rejected by test >&2\nexit 1\n",
     );
     await chmod(join(remoteDir, "hooks", "pre-receive"), 0o755);
-    await writeJawfishConfig(context, libraryDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
 
     const result = await runJawfish(context, ["update"]);
 
     assert.equal(result.exitCode, 1);
     assert.match(result.stdout, /Updated: focus, plan/);
-    assert.match(result.stderr, /Library commit was created, but push failed/);
+    assert.match(result.stderr, /Agentics repo commit was created, but push failed/);
     assert.match(result.stderr, /git -C .* push/);
-    const localHead = await git(libraryDir, ["rev-parse", "HEAD"]);
+    const localHead = await git(agenticsRepoDir, ["rev-parse", "HEAD"]);
     const remoteHead = await git(remoteDir, ["rev-parse", "HEAD"]);
-    const commitMessage = await git(libraryDir, ["log", "-1", "--pretty=%s"]);
+    const commitMessage = await git(agenticsRepoDir, ["log", "-1", "--pretty=%s"]);
     assert.notEqual(localHead.stdout, remoteHead.stdout);
     assert.equal(commitMessage.stdout.trim(), "update jawfish");
   });
@@ -2008,15 +2008,15 @@ describe("jawfish CLI", () => {
 
   test("lists catalog entries as a table or JSON", async () => {
     const context = await setup();
-    const libraryDir = join(context.homeDir, "content-library");
+    const agenticsRepoDir = join(context.homeDir, "agentics");
 
-    await writeJawfishConfig(context, libraryDir);
-    await mkdir(join(libraryDir, "skills", "focus"), { recursive: true });
-    await mkdir(join(libraryDir, "skills", "handoff"), { recursive: true });
-    await mkdir(join(libraryDir, "agents", "review"), { recursive: true });
-    await mkdir(join(libraryDir, "agents", "survey"), { recursive: true });
+    await writeJawfishConfig(context, agenticsRepoDir);
+    await mkdir(join(agenticsRepoDir, "skills", "focus"), { recursive: true });
+    await mkdir(join(agenticsRepoDir, "skills", "handoff"), { recursive: true });
+    await mkdir(join(agenticsRepoDir, "agents", "review"), { recursive: true });
+    await mkdir(join(agenticsRepoDir, "agents", "survey"), { recursive: true });
     await writeFile(
-      join(libraryDir, "index.json"),
+      join(agenticsRepoDir, "index.json"),
       JSON.stringify(
         {
           handoff: {
@@ -2103,28 +2103,28 @@ describe("jawfish CLI", () => {
         description: "Focus workflow",
         installed: "project",
         name: "focus",
-        path: "~/content-library/skills/focus",
+        path: "~/agentics/skills/focus",
         type: "skill",
       },
       {
         description: "Compact current conversation",
         installed: "global",
         name: "handoff",
-        path: "~/content-library/skills/handoff",
+        path: "~/agentics/skills/handoff",
         type: "skill",
       },
       {
         description: "Review changes",
         installed: "both",
         name: "review",
-        path: "~/content-library/agents/review",
+        path: "~/agentics/agents/review",
         type: "agent",
       },
       {
         description: "Survey repo",
         installed: "-",
         name: "survey",
-        path: "~/content-library/agents/survey",
+        path: "~/agentics/agents/survey",
         type: "agent",
       },
     ]);
@@ -2229,9 +2229,9 @@ describe("jawfish CLI", () => {
 
   test("rejects unsupported list type", async () => {
     const context = await setup();
-    const libraryDir = join(context.homeDir, "content-library");
+    const agenticsRepoDir = join(context.homeDir, "agentics");
 
-    await writeJawfishConfig(context, libraryDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
     const result = await runJawfish(context, ["list", "--type", "script"]);
 
     assert.equal(result.exitCode, 1);
@@ -2243,9 +2243,9 @@ describe("jawfish CLI", () => {
 
   test("rejects unsupported list installed filter", async () => {
     const context = await setup();
-    const libraryDir = join(context.homeDir, "content-library");
+    const agenticsRepoDir = join(context.homeDir, "agentics");
 
-    await writeJawfishConfig(context, libraryDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
     const result = await runJawfish(context, [
       "list",
       "--installed",
@@ -2259,7 +2259,7 @@ describe("jawfish CLI", () => {
     );
   });
 
-  test("adds a URL source with no configured content library", async () => {
+  test("adds a URL source with no configured agentics repo", async () => {
     const context = await setup();
     const sourceDir = join(context.rootDir, "quick-skill");
 
@@ -2294,14 +2294,14 @@ describe("jawfish CLI", () => {
       assert.deepEqual(
         JSON.parse(await readFile(configPath(context.homeDir), "utf8")),
         {
-          contentLibrary: join(context.homeDir, "content-library"),
+          agenticsRepo: join(context.homeDir, "agentics"),
           defaultTool: "codex",
         },
       );
       assert.deepEqual(
         JSON.parse(
           await readFile(
-            join(context.homeDir, "content-library", "index.json"),
+            join(context.homeDir, "agentics", "index.json"),
             "utf8",
           ),
         ),
@@ -2319,7 +2319,7 @@ describe("jawfish CLI", () => {
     }
   });
 
-  test("initializes config and a local content library", async () => {
+  test("initializes config and a local agentics repo", async () => {
     const context = await setup();
 
     const result = await runJawfish(context, ["init"], {
@@ -2331,11 +2331,11 @@ describe("jawfish CLI", () => {
     assert.deepEqual(
       JSON.parse(await readFile(configPath(context.homeDir), "utf8")),
       {
-        contentLibrary: join(context.homeDir, "content-library"),
+        agenticsRepo: join(context.homeDir, "agentics"),
         defaultTool: "codex",
       },
     );
-    await stat(join(context.homeDir, "content-library", ".git"));
+    await stat(join(context.homeDir, "agentics", ".git"));
 
     const repeated = await runJawfish(context, ["init"], {
       env: { JAWFISH_DEFAULT_TOOL: "codex" },
@@ -2343,10 +2343,10 @@ describe("jawfish CLI", () => {
 
     assert.equal(repeated.exitCode, 0, repeated.stderr);
     assert.match(repeated.stdout, /Initialized jawfish/);
-    await stat(join(context.homeDir, "content-library", ".git"));
+    await stat(join(context.homeDir, "agentics", ".git"));
   });
 
-  test("prints a clear error for an unknown catalog name in an empty local library", async () => {
+  test("prints a clear error for an unknown catalog name in an empty local agentics repo", async () => {
     const context = await setup();
 
     const result = await runJawfish(context, ["add", "missing"], {
@@ -2397,14 +2397,14 @@ describe("jawfish CLI", () => {
 
   test("rejects unrelated options before running commands", async () => {
     const context = await setup();
-    const libraryDir = join(context.rootDir, "content-library");
+    const agenticsRepoDir = join(context.rootDir, "agentics");
     const fakeBinDir = join(context.rootDir, "bin");
     const fakeBun = join(fakeBinDir, "bun");
     const logPath = join(context.rootDir, "bun-args.txt");
 
-    await createGitRepository(libraryDir);
-    await writeIndexedFocusSkill(libraryDir);
-    await writeJawfishConfig(context, libraryDir);
+    await createGitRepository(agenticsRepoDir);
+    await writeIndexedFocusSkill(agenticsRepoDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
     await mkdir(fakeBinDir, { recursive: true });
     await writeFile(
       fakeBun,
@@ -2474,7 +2474,7 @@ describe("jawfish CLI", () => {
 
   test("creates first-run config with default tools and selected default tool", async () => {
     const context = await setup();
-    const remoteDir = await createContentLibraryRemote(context, {
+    const remoteDir = await createAgenticsRepoRemote(context, {
       "demo-skill": {
         type: "skill",
         description: "Demo skill",
@@ -2484,7 +2484,7 @@ describe("jawfish CLI", () => {
 
     const result = await runJawfish(context, ["add", "demo-skill"], {
       env: {
-        JAWFISH_CONTENT_LIBRARY: remoteDir,
+        JAWFISH_AGENTICS_REPO: remoteDir,
         JAWFISH_DEFAULT_TOOL: "claude-code",
       },
     });
@@ -2495,7 +2495,7 @@ describe("jawfish CLI", () => {
     );
 
     assert.deepEqual(config, {
-      contentLibrary: remoteDir,
+      agenticsRepo: remoteDir,
       defaultTool: "claude-code",
     });
   });
@@ -2527,7 +2527,7 @@ describe("jawfish CLI", () => {
 
   test("rejects unsupported JAWFISH_DEFAULT_TOOL", async () => {
     const context = await setup();
-    const remoteDir = await createContentLibraryRemote(context, {
+    const remoteDir = await createAgenticsRepoRemote(context, {
       "demo-skill": {
         type: "skill",
         description: "Demo skill",
@@ -2537,7 +2537,7 @@ describe("jawfish CLI", () => {
 
     const result = await runJawfish(context, ["add", "demo-skill"], {
       env: {
-        JAWFISH_CONTENT_LIBRARY: remoteDir,
+        JAWFISH_AGENTICS_REPO: remoteDir,
         JAWFISH_DEFAULT_TOOL: "unknown",
       },
     });
@@ -2564,9 +2564,9 @@ describe("jawfish CLI", () => {
     );
   });
 
-  test("clones configured content library and reads name-keyed catalog entries", async () => {
+  test("clones configured agentics repo and reads name-keyed catalog entries", async () => {
     const context = await setup();
-    const remoteDir = await createContentLibraryRemote(context, {
+    const remoteDir = await createAgenticsRepoRemote(context, {
       "demo-skill": {
         type: "skill",
         description: "Demo skill",
@@ -2578,7 +2578,7 @@ describe("jawfish CLI", () => {
     await writeFile(
       configPath(context.homeDir),
       `${JSON.stringify({
-        contentLibrary: remoteDir,
+        agenticsRepo: remoteDir,
         defaultTool: "codex",
       })}\n`,
     );
@@ -2594,7 +2594,7 @@ describe("jawfish CLI", () => {
     const reusedClone = await runJawfish(context, ["add", "demo-skill"]);
     assert.equal(reusedClone.exitCode, 0, reusedClone.stderr);
 
-    const cloneDir = join(context.homeDir, "content-library");
+    const cloneDir = join(context.homeDir, "agentics");
     const cloneHead = await git(cloneDir, ["rev-parse", "HEAD"]);
     assert.match(cloneHead.stdout.trim(), /^[a-f0-9]{40}$/);
     assert.match(
@@ -2607,15 +2607,15 @@ describe("jawfish CLI", () => {
     );
   });
 
-  test("rejects the old nested managed library path", async () => {
+  test("rejects the old nested managed repo path", async () => {
     const context = await setup();
-    const oldLibraryDir = join(context.homeDir, "library");
-    await createGitRepository(oldLibraryDir);
-    await writeIndexedFocusSkill(oldLibraryDir);
+    const oldAgenticsRepoDir = join(context.homeDir, "repo");
+    await createGitRepository(oldAgenticsRepoDir);
+    await writeIndexedFocusSkill(oldAgenticsRepoDir);
     await writeFile(
       configPath(context.homeDir),
       `${JSON.stringify({
-        contentLibrary: oldLibraryDir,
+        agenticsRepo: oldAgenticsRepoDir,
         defaultTool: "codex",
       })}\n`,
     );
@@ -2625,13 +2625,13 @@ describe("jawfish CLI", () => {
     assert.equal(result.exitCode, 1);
     assert.match(
       result.stderr,
-      /Nested content library is no longer supported/,
+      /Nested agentics repo is no longer supported/,
     );
   });
 
   test("fails with a clear error when the catalog is invalid", async () => {
     const context = await setup();
-    const remoteDir = await createContentLibraryRemote(context, {
+    const remoteDir = await createAgenticsRepoRemote(context, {
       broken: {
         type: "skill",
         description: "Broken skill",
@@ -2641,7 +2641,7 @@ describe("jawfish CLI", () => {
     await writeFile(
       configPath(context.homeDir),
       `${JSON.stringify({
-        contentLibrary: remoteDir,
+        agenticsRepo: remoteDir,
         defaultTool: "codex",
       })}\n`,
     );
@@ -2670,8 +2670,8 @@ describe("CLI test harness", () => {
 
   test("creates temporary git repositories and remotes", async () => {
     const context = await setup();
-    const repoDir = join(context.rootDir, "content-library");
-    const remoteDir = join(context.rootDir, "content-library.git");
+    const repoDir = join(context.rootDir, "agentics");
+    const remoteDir = join(context.rootDir, "agentics.git");
 
     await createGitRepository(repoDir);
     await createBareRemote(remoteDir);
@@ -2696,12 +2696,12 @@ interface TestCatalogEntry {
   upstream?: string;
 }
 
-async function createContentLibraryRemote(
+async function createAgenticsRepoRemote(
   context: CliTestContext,
   catalog: Record<string, TestCatalogEntry>,
 ): Promise<string> {
-  const repoDir = join(context.rootDir, "content-library-source");
-  const remoteDir = join(context.rootDir, "content-library.git");
+  const repoDir = join(context.rootDir, "agentics-source");
+  const remoteDir = join(context.rootDir, "agentics.git");
 
   await createGitRepository(repoDir);
   await mkdir(join(repoDir, "skills", "demo-skill"), { recursive: true });

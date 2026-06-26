@@ -16,7 +16,7 @@ scan only supported tools and should not imply arbitrary provider support.
 ## Decision
 
 Add a provider skill import command that scans a supported tool's global skill
-directory, copies selected skills into the content library, records them in the
+directory, copies selected skills into the agentics repo, records them in the
 catalog, and adopts them into the global manifest.
 
 Candidate command:
@@ -41,12 +41,12 @@ MVP choices:
 
 ## Expected Flow
 
-1. Resolve config and content library.
+1. Resolve config and agentics repo.
 2. Resolve the source provider's global skill directory.
 3. Discover importable skills.
 4. Show names, types, collisions, and skipped items.
 5. With confirmation or `--yes`, import selected skills into the content
-   library.
+   agentics repo.
 6. Update catalog.
 7. Update global manifest and adopt the existing global skill files as managed.
 

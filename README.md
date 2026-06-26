@@ -10,7 +10,7 @@
 
 Jawfish is a small package manager for reusable agentics:
 
-1. Keep skills, prompts, and agents in one content library.
+1. Keep skills, prompts, and agents in one git repo on disk.
 2. Install them globally or into a project.
 3. Update them when upstream changes.
 
@@ -28,8 +28,8 @@ Add a skill from a URL or local path:
 jawfish add https://github.com/mattpocock/skills/blob/main/skills/productivity/handoff/SKILL.md
 ```
 
-Jawfish creates `~/.jawfish/config.json` and a local content library at
-`~/.jawfish/content-library` on first use. The library is a git repo.
+Jawfish creates `~/.jawfish/config.json` and a local git repo at
+`~/.jawfish/agentics` on first use.
 
 Initialize first, if you want to choose defaults before adding:
 
@@ -37,13 +37,13 @@ Initialize first, if you want to choose defaults before adding:
 jawfish init
 ```
 
-Use an existing content library:
+Use an existing repo:
 
 ```sh
 jawfish init git@github.com:you/agentics.git
 ```
 
-Browse the library:
+Browse repo entries:
 
 ```sh
 jawfish list
@@ -63,8 +63,15 @@ jawfish update
 
 ## How It Works
 
-Jawfish reads from one content library and writes tool-native files into the
+Jawfish reads packages from the git repo configured by `agenticsRepo`
+(default: `~/.jawfish/agentics`) and writes tool-native files into the
 current project or your global tool config.
+
+Imported files are copied into that repo, then copied into each installed
+project/global tool directory. Jawfish does not symlink: tools get normal native
+files, and each install can be managed independently. `jawfish update`
+re-fetches upstream sources into the repo, commits/pushes when possible, and
+reinstalls managed files where already installed.
 
 Project installs are tracked in `jawfish.json`. Global installs are tracked in
 `~/.jawfish/jawfish.json`.
@@ -73,15 +80,15 @@ Project installs are tracked in `jawfish.json`. Global installs are tracked in
 
 | Command                            | What it does                         |
 | ---------------------------------- | ------------------------------------ |
-| `jawfish add <name>`               | Install from your library            |
+| `jawfish add <name>`               | Install from your repo               |
 | `jawfish add <source>`             | Import from a URL or local file      |
-| `jawfish init [content-library]`   | Create config and content library    |
+| `jawfish init [agentics-repo]`     | Create config and package repo       |
 | `jawfish import-skills <provider>` | Import global provider skills        |
 | `jawfish install <name>`           | Same as `jawfish add <name>`         |
 | `jawfish i <name>`                 | Same as `jawfish add <name>`         |
 | `jawfish install`                  | Reinstall everything in the manifest |
 | `jawfish i`                        | Same as `jawfish install`            |
-| `jawfish list`                     | Browse available library entries     |
+| `jawfish list`                     | Browse available repo entries        |
 | `jawfish update [name]`            | Pull upstream changes                |
 | `jawfish upgrade`                  | Upgrade jawfish itself               |
 | `jawfish remove <name>`            | Remove a managed install             |
@@ -95,8 +102,10 @@ Add `-y` or `--yes` to import without the prompt.
 `--type skill|agent|prompt`, `--installed project|global|both|none|any`,
 and `--raw` for JSON output.
 
-Jawfish pulls remote-backed libraries before install/list and commits/pushes
-library changes after add/import/update when an upstream exists.
+Jawfish pulls remote-backed repos before install/list and commits/pushes repo
+changes after add/import/update when an upstream exists.
+
+## Configuration
 
 Add `--global` or `-g` to target your global tool config instead of the
 current project.
@@ -107,9 +116,9 @@ Jawfish currently supports `codex`, `claude-code`, `hermes`, `openclaw`,
 `defaultTool` must be one of those supported tools. You can also set it with
 `JAWFISH_DEFAULT_TOOL`.
 
-`contentLibrary` is optional. If unset, Jawfish uses
-`~/.jawfish/content-library`. You can also set it with
-`JAWFISH_CONTENT_LIBRARY`.
+`agenticsRepo` points to the package repo. If unset, Jawfish uses
+`~/.jawfish/agentics`. You can also set it with
+`JAWFISH_AGENTICS_REPO`.
 
 Project installs go into `.codex/`, `.claude/`, `.hermes/`, `skills/`,
 `.opencode/`, or `.pi/`.

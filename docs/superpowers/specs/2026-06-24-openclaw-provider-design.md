@@ -19,7 +19,7 @@ package.
 - No new agent destination behavior.
 - Prompt and agent packages fail clearly when targeting `openclaw`.
 - No OpenClaw CLI integration.
-- No changes to Jawfish's content-library model.
+- No changes to Jawfish's agentics model.
 
 ## Testing
 

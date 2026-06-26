@@ -3,7 +3,7 @@
 ## Goal
 
 Make Jawfish CLI behavior reliable across common user stories, especially when
-library, manifest, project installs, global installs, provider imports, and
+agentics repo, manifest, project installs, global installs, provider imports, and
 source imports disagree.
 
 ## Scope
@@ -27,12 +27,12 @@ that cannot be fixed locally.
 Use a command/state matrix, then add tests before fixes. The important state axes
 are:
 
-- content library missing, empty, local git, or remote-backed git
+- agentics repo missing, empty, local git, or remote-backed git
 - catalog entry exists or is missing
 - project manifest entry exists or is missing
 - global manifest entry exists or is missing
 - destination files exist, are managed, are unmanaged, or are partly stale
-- package source is a library name, local path, URL file, or URL directory
+- package source is a repo entry name, local path, URL file, or URL directory
 - default tool differs from the original installed tool
 - command targets project scope or global scope
 
@@ -42,9 +42,9 @@ are:
 that scope's manifest. Existing global installs do not imply project install,
 and existing project installs do not imply global install.
 
-`add <source>` imports the source into the content library if absent, then
+`add <source>` imports the source into the agentics repo if absent, then
 installs it into the selected scope. If the same source is already imported, the
-command installs the existing library package into the requested scope without
+command installs the existing repo package into the requested scope without
 duplicating catalog entries.
 
 `install` with no target materializes the selected scope's manifest only. Missing
@@ -66,8 +66,8 @@ Non-upstream packages are skipped in bulk and rejected clearly by name.
 `remove <name>` removes only managed files for the selected scope, preserves
 unmanaged files, and removes only that scope's manifest entry.
 
-`init` is idempotent, creates or connects the content library, and rejects the
-old nested managed-library path.
+`init` is idempotent, creates or connects the agentics repo, and rejects the
+old nested managed repo path.
 
 `upgrade` delegates to the package-manager command and rejects unrelated options.
 
