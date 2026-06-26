@@ -918,6 +918,11 @@ async function importPackage(
   source: string,
   nameOverride: string | undefined,
 ): Promise<ImportPackageResult> {
+  const existingName = catalogNameForUpstream(catalog, source);
+  if (existingName !== undefined) {
+    return { imported: false, name: existingName };
+  }
+
   const acquired = await acquireSource(source);
   const name = nameOverride ?? acquired.inferredName;
 
@@ -946,6 +951,19 @@ async function importPackage(
   };
 
   return { imported: true, name };
+}
+
+function catalogNameForUpstream(
+  catalog: Catalog,
+  source: string,
+): string | undefined {
+  for (const [name, entry] of Object.entries(catalog.jawfish)) {
+    if (isSameUpstream(entry.upstream, source)) {
+      return name;
+    }
+  }
+
+  return undefined;
 }
 
 function isSameUpstream(existing: string | undefined, source: string): boolean {

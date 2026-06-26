@@ -1189,6 +1189,51 @@ describe("jawfish CLI", () => {
     );
   });
 
+  test("reuses a renamed local source when installing another scope", async () => {
+    const context = await setup();
+    const libraryDir = join(context.rootDir, "content-library");
+    const sourceDir = join(context.rootDir, "focus");
+
+    await createGitRepository(libraryDir);
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(join(sourceDir, "SKILL.md"), "# Focus\n");
+    await writeJawfishConfig(context, libraryDir);
+
+    const projectResult = await runJawfish(context, [
+      "add",
+      "--name",
+      "renamed-focus",
+      sourceDir,
+    ]);
+    assert.equal(projectResult.exitCode, 0, projectResult.stderr);
+
+    const globalResult = await runJawfish(context, ["add", "-g", sourceDir]);
+
+    assert.equal(globalResult.exitCode, 0, globalResult.stderr);
+    assert.match(globalResult.stdout, /Added renamed-focus to global/);
+    assert.deepEqual(
+      JSON.parse(await readFile(join(libraryDir, "index.json"), "utf8")),
+      {
+        "renamed-focus": {
+          description: "",
+          path: "skills/renamed-focus",
+          type: "skill",
+          upstream: sourceDir,
+        },
+      },
+    );
+    assert.deepEqual(
+      JSON.parse(
+        await readFile(join(context.projectDir, "jawfish.json"), "utf8"),
+      ),
+      { jawfish: { "renamed-focus": { tool: "codex" } } },
+    );
+    assert.deepEqual(
+      JSON.parse(await readFile(join(context.homeDir, "jawfish.json"), "utf8")),
+      { jawfish: { "renamed-focus": { tool: "codex" } } },
+    );
+  });
+
   test("imports a URL file parent package, pushes the library, and installs it", async () => {
     const context = await setup();
     const libraryDir = join(context.rootDir, "content-library");
@@ -1241,6 +1286,59 @@ describe("jawfish CLI", () => {
       const localHead = await git(libraryDir, ["rev-parse", "HEAD"]);
       const remoteHead = await git(remoteDir, ["rev-parse", "HEAD"]);
       assert.equal(localHead.stdout, remoteHead.stdout);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("reuses a renamed URL file source when installing another scope", async () => {
+    const context = await setup();
+    const libraryDir = join(context.rootDir, "content-library");
+    const sourceDir = join(context.rootDir, "upstream-focus");
+
+    await createGitRepository(libraryDir);
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(join(sourceDir, "SKILL.md"), "# Focus\n");
+    await writeJawfishConfig(context, libraryDir);
+
+    const server = await serveStaticDirectory(context.rootDir);
+    const sourceUrl = `${server.url}/upstream-focus/SKILL.md`;
+    try {
+      const projectResult = await runJawfish(context, [
+        "add",
+        "--name",
+        "renamed-url-focus",
+        sourceUrl,
+      ]);
+      assert.equal(projectResult.exitCode, 0, projectResult.stderr);
+
+      const globalResult = await runJawfish(context, ["add", "-g", sourceUrl]);
+
+      assert.equal(globalResult.exitCode, 0, globalResult.stderr);
+      assert.match(globalResult.stdout, /Added renamed-url-focus to global/);
+      assert.deepEqual(
+        JSON.parse(await readFile(join(libraryDir, "index.json"), "utf8")),
+        {
+          "renamed-url-focus": {
+            description: "",
+            path: "skills/renamed-url-focus",
+            type: "skill",
+            upstream: sourceUrl,
+          },
+        },
+      );
+      assert.deepEqual(
+        JSON.parse(
+          await readFile(join(context.projectDir, "jawfish.json"), "utf8"),
+        ),
+        { jawfish: { "renamed-url-focus": { tool: "codex" } } },
+      );
+      assert.deepEqual(
+        JSON.parse(
+          await readFile(join(context.homeDir, "jawfish.json"), "utf8"),
+        ),
+        { jawfish: { "renamed-url-focus": { tool: "codex" } } },
+      );
     } finally {
       await server.close();
     }
@@ -1330,6 +1428,10 @@ describe("jawfish CLI", () => {
       const result = await runJawfish(context, ["add", sourceUrl]);
 
       assert.equal(result.exitCode, 0, result.stderr);
+      const globalResult = await runJawfish(context, ["add", "-g", sourceUrl]);
+
+      assert.equal(globalResult.exitCode, 0, globalResult.stderr);
+      assert.match(globalResult.stdout, /Added review-agent to global/);
       assert.equal(
         await readFile(
           join(
@@ -1354,8 +1456,54 @@ describe("jawfish CLI", () => {
           },
         },
       );
+      assert.deepEqual(
+        JSON.parse(
+          await readFile(join(context.projectDir, "jawfish.json"), "utf8"),
+        ),
+        { jawfish: { "review-agent": { tool: "codex" } } },
+      );
+      assert.deepEqual(
+        JSON.parse(
+          await readFile(join(context.homeDir, "jawfish.json"), "utf8"),
+        ),
+        { jawfish: { "review-agent": { tool: "codex" } } },
+      );
     } finally {
       await server.close();
+    }
+  });
+
+  test("failed URL source imports leave no catalog entry", async () => {
+    const context = await setup();
+    const libraryDir = join(context.rootDir, "content-library");
+
+    await createGitRepository(libraryDir);
+    await writeJawfishConfig(context, libraryDir);
+
+    const server = createServer((_request, response) => {
+      response.writeHead(500, { "content-type": "text/plain" });
+      response.end("boom\n");
+    });
+    await new Promise<void>((resolveListen) =>
+      server.listen(0, "127.0.0.1", resolveListen),
+    );
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("Expected TCP server address");
+    }
+
+    try {
+      const sourceUrl = `http://127.0.0.1:${address.port}/broken-skill`;
+      const result = await runJawfish(context, ["add", sourceUrl]);
+
+      assert.equal(result.exitCode, 1);
+      assert.match(result.stderr, /Failed to fetch .*500 Internal Server Error/);
+      await assert.rejects(
+        readFile(join(libraryDir, "index.json"), "utf8"),
+        /ENOENT/,
+      );
+    } finally {
+      await closeServer(server);
     }
   });
 
