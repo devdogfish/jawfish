@@ -501,6 +501,7 @@ async function importSkillsCommand(args: ParsedArgs): Promise<number> {
   printImportSkillsPlan(provider, sourceRoot, plan);
 
   if (plan.imported.length === 0) {
+    console.log("No importable skills found");
     return 0;
   }
 
@@ -1013,13 +1014,15 @@ function printImportSkillsPlan(
     `import: ${formatSummaryNames(plan.imported.map((skill) => skill.name))}`,
   );
   console.log(`conflicts: ${formatSummaryNames(plan.conflicts)}`);
-  console.log(
-    `skipped: ${
-      plan.skipped.length === 0
-        ? "none"
-        : plan.skipped.map((skip) => `${skip.name} (${skip.reason})`).join(", ")
-    }`,
-  );
+  console.log(`skipped: ${formatImportSkillSkips(plan.skipped)}`);
+}
+
+function formatImportSkillSkips(skipped: ImportSkillsSkip[]): string {
+  if (skipped.length === 0) {
+    return "none";
+  }
+
+  return skipped.map((skip) => `${skip.name} (${skip.reason})`).join(", ");
 }
 
 async function confirmImportSkills(count: number): Promise<boolean> {
