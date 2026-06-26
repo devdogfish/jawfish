@@ -59,6 +59,11 @@ export interface InitCommandPrompts {
   ) => Promise<string[]>;
 }
 
+interface AgenticsSelectionPromptOptions {
+  cancelMessage: string;
+  message: string;
+}
+
 interface InitCommandOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
@@ -346,8 +351,8 @@ async function runMachineStarterSetup(
 
   printInspection(inspection);
 
-  const importedBeforeStarter = inspection.usable.length === 0;
-  if (importedBeforeStarter) {
+  const shouldImportBeforeStarterSelection = inspection.usable.length === 0;
+  if (shouldImportBeforeStarterSelection) {
     await importSelectedProviders(agenticsRepoDir, context);
     inspection = await inspectAgenticsRepo(agenticsRepoDir);
     if (inspection.usable.length > 0) {
@@ -359,7 +364,7 @@ async function runMachineStarterSetup(
     await installSelectedGlobalStarters(config, agenticsRepoDir, inspection, context);
   }
 
-  if (!importedBeforeStarter) {
+  if (!shouldImportBeforeStarterSelection) {
     await importSelectedProviders(agenticsRepoDir, context);
   }
 }
@@ -374,13 +379,16 @@ async function importSelectedProviders(
   }
 
   const selectedProviders = await prompt(defaultSupportedTools);
+  const pathOptions = { cwd: context.cwd, env: context.env };
   for (const provider of selectedProviders) {
     assertSupportedConfiguredTool(provider, "selected import provider");
     const catalog = await readCatalog(agenticsRepoDir);
-    const result = await importProviderSkills(agenticsRepoDir, catalog, provider, {
-      cwd: context.cwd,
-      env: context.env,
-    });
+    const result = await importProviderSkills(
+      agenticsRepoDir,
+      catalog,
+      provider,
+      pathOptions,
+    );
     if (result !== 0) {
       throw new Error(`Import failed for ${provider}`);
     }
@@ -393,10 +401,8 @@ async function installSelectedGlobalStarters(
   inspection: AgenticsRepoInspection,
   context: InitContext,
 ): Promise<void> {
-  const manifest = await readManifest("global", {
-    cwd: context.cwd,
-    env: context.env,
-  });
+  const pathOptions = { cwd: context.cwd, env: context.env };
+  const manifest = await readManifest("global", pathOptions);
   const selected = await selectGlobalStarterAgentics(context, inspection, manifest);
   if (selected.length === 0) {
     console.log("No global starter agentics selected");
@@ -406,10 +412,14 @@ async function installSelectedGlobalStarters(
   const tool = configuredDefaultTool(config, context);
   const catalog = catalogFromInspection(inspection);
   for (const name of selected) {
-    await installManifestEntry(agenticsRepoDir, catalog, name, "global", tool, {
-      cwd: context.cwd,
-      env: context.env,
-    });
+    await installManifestEntry(
+      agenticsRepoDir,
+      catalog,
+      name,
+      "global",
+      tool,
+      pathOptions,
+    );
     console.log(`Installed ${name} globally`);
   }
 }
@@ -481,33 +491,29 @@ async function promptForProjectAgentics(
   inspection: AgenticsRepoInspection,
   manifest: Manifest,
 ): Promise<string[]> {
-  const selected = await multiselect({
+  return promptForAgenticsSelection(inspection, manifest, {
+    cancelMessage: "Project setup cancelled",
     message: "Select project agentics",
-    options: inspection.usable.map(({ entry, name }) => ({
-      hint: entry.description,
-      label: `${name} (${entry.type})`,
-      value: name,
-    })),
-    initialValues: Object.keys(manifest.jawfish).filter((name) =>
-      inspection.usableNames.includes(name),
-    ),
-    required: false,
   });
-
-  if (isCancel(selected)) {
-    cancel("Project setup cancelled");
-    throw new Error("Project setup cancelled");
-  }
-
-  return selected;
 }
 
 async function promptForGlobalStarterAgentics(
   inspection: AgenticsRepoInspection,
   manifest: Manifest,
 ): Promise<string[]> {
-  const selected = await multiselect({
+  return promptForAgenticsSelection(inspection, manifest, {
+    cancelMessage: "Starter setup cancelled",
     message: "Select global starter agentics",
+  });
+}
+
+async function promptForAgenticsSelection(
+  inspection: AgenticsRepoInspection,
+  manifest: Manifest,
+  options: AgenticsSelectionPromptOptions,
+): Promise<string[]> {
+  const selected = await multiselect({
+    message: options.message,
     options: inspection.usable.map(({ entry, name }) => ({
       hint: entry.description,
       label: `${name} (${entry.type})`,
@@ -520,8 +526,8 @@ async function promptForGlobalStarterAgentics(
   });
 
   if (isCancel(selected)) {
-    cancel("Starter setup cancelled");
-    throw new Error("Starter setup cancelled");
+    cancel(options.cancelMessage);
+    throw new Error(options.cancelMessage);
   }
 
   return selected;
