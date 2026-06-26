@@ -487,14 +487,7 @@ describe("jawfish CLI", () => {
   });
 
   test("imports global skills from every supported provider", async () => {
-    for (const tool of [
-      "codex",
-      "claude-code",
-      "hermes",
-      "openclaw",
-      "opencode",
-      "pi",
-    ] as const) {
+    for (const tool of defaultSupportedTools) {
       const context = await setup();
       const libraryDir = join(context.rootDir, `content-library-${tool}`);
       const codexHome = join(context.rootDir, "codex-home");
@@ -634,7 +627,7 @@ describe("jawfish CLI", () => {
     assert.match(result.stderr, /Unsupported provider: unknown/);
     assert.match(
       result.stderr,
-      /Supported tools: codex, claude-code, hermes, openclaw, opencode, pi/,
+      new RegExp(`Supported tools: ${defaultSupportedTools.join(", ")}`),
     );
   });
 
