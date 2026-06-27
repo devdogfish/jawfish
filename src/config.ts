@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { errorHasCode, errorMessage } from "./errors.ts";
 import {
+  assertSupportedTool,
   supportedTools,
   type InstallScope,
   type ToolPaths,
@@ -88,7 +89,7 @@ export async function loadConfig(
   }
 
   if (config.defaultTool === undefined && env.JAWFISH_DEFAULT_TOOL !== undefined) {
-    assertSupportedConfiguredTool(env.JAWFISH_DEFAULT_TOOL, "JAWFISH_DEFAULT_TOOL");
+    assertSupportedTool(env.JAWFISH_DEFAULT_TOOL, "JAWFISH_DEFAULT_TOOL");
     config.defaultTool = env.JAWFISH_DEFAULT_TOOL;
     changed = true;
   } else if (
@@ -99,7 +100,7 @@ export async function loadConfig(
     changed = true;
   } else {
     if (config.defaultTool !== undefined) {
-      assertSupportedConfiguredTool(config.defaultTool, "config defaultTool");
+      assertSupportedTool(config.defaultTool, "config defaultTool");
     }
   }
 
@@ -139,14 +140,14 @@ async function chooseDefaultTool(
   const envDefault = env.JAWFISH_DEFAULT_TOOL;
 
   if (envDefault !== undefined) {
-    assertSupportedConfiguredTool(envDefault, "JAWFISH_DEFAULT_TOOL");
+    assertSupportedTool(envDefault, "JAWFISH_DEFAULT_TOOL");
     return envDefault;
   }
 
   const selected = await (options.promptForDefaultTool ?? promptForTool)([
     ...supportedTools,
   ]);
-  assertSupportedConfiguredTool(selected, "selected default tool");
+  assertSupportedTool(selected, "selected default tool");
   return selected;
 }
 
@@ -178,17 +179,6 @@ async function writeConfig(path: string, config: JawfishConfig): Promise<void> {
   }
 
   await writeFile(path, `${JSON.stringify(persisted, null, 2)}\n`);
-}
-
-export function assertSupportedConfiguredTool(
-  tool: string,
-  source: string,
-): void {
-  if (!supportedTools.includes(tool as (typeof supportedTools)[number])) {
-    throw new Error(
-      `Unsupported ${source}: ${tool}. Supported tools: ${supportedTools.join(", ")}`,
-    );
-  }
 }
 
 export function managedAgenticsRepoPath(

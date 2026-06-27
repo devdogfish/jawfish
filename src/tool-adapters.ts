@@ -26,6 +26,7 @@ export type DestinationSpec =
   | { extension: ".md"; kind: "file"; path: string };
 
 interface ToolAdapter {
+  root: (scope: InstallScope, paths: ToolPaths) => string;
   destination: (
     name: string,
     type: AgenticType,
@@ -36,24 +37,19 @@ interface ToolAdapter {
 
 const adapters = {
   codex: {
-    destination: (name, type, scope, paths) => ({
-      kind: "directory",
-      path: join(codexRoot(scope, paths), typeFolder(type), name),
-    }),
+    root: codexRoot,
+    destination: directoryDestination(codexRoot),
   },
   "claude-code": {
-    destination: (name, type, scope, paths) => ({
-      kind: "directory",
-      path: join(scopeRoot(scope, paths), ".claude", typeFolder(type), name),
-    }),
+    root: claudeCodeRoot,
+    destination: directoryDestination(claudeCodeRoot),
   },
   hermes: {
-    destination: (name, type, scope, paths) => ({
-      kind: "directory",
-      path: join(scopeRoot(scope, paths), ".hermes", typeFolder(type), name),
-    }),
+    root: hermesRoot,
+    destination: directoryDestination(hermesRoot),
   },
   openclaw: {
+    root: openclawRoot,
     destination: (name, type, scope, paths) => {
       if (type !== "skill") {
         throw new Error("OpenClaw supports only skill packages");
@@ -66,6 +62,7 @@ const adapters = {
     },
   },
   opencode: {
+    root: opencodeRoot,
     destination: (name, type, scope, paths) => {
       const root = opencodeRoot(scope, paths);
       switch (type) {
@@ -90,6 +87,7 @@ const adapters = {
     },
   },
   pi: {
+    root: piRoot,
     destination: (name, type, scope, paths) => {
       const root = piRoot(scope, paths);
       switch (type) {
@@ -114,10 +112,13 @@ const adapters = {
   },
 } satisfies Record<SupportedTool, ToolAdapter>;
 
-export function assertSupportedTool(tool: string): asserts tool is SupportedTool {
+export function assertSupportedTool(
+  tool: string,
+  source = "tool",
+): asserts tool is SupportedTool {
   if (!isSupportedTool(tool)) {
     throw new Error(
-      `Unsupported tool: ${tool}. Supported tools: ${supportedTools.join(", ")}`,
+      `Unsupported ${source}: ${tool}. Supported tools: ${supportedTools.join(", ")}`,
     );
   }
 }
@@ -147,6 +148,15 @@ export function destinationSpec(
   return adapters[tool].destination(name, type, scope, paths);
 }
 
+export function sourceProviderSkillRoot(
+  tool: string,
+  scope: InstallScope,
+  paths: ToolPaths,
+): string {
+  assertSupportedTool(tool);
+  return join(adapters[tool].root(scope, paths), typeFolder("skill"));
+}
+
 export function typeFolder(type: AgenticType): string {
   switch (type) {
     case "agent":
@@ -162,8 +172,25 @@ function scopeRoot(scope: InstallScope, paths: ToolPaths): string {
   return scope === "project" ? paths.projectDir : paths.homeDir;
 }
 
+function directoryDestination(
+  root: (scope: InstallScope, paths: ToolPaths) => string,
+): ToolAdapter["destination"] {
+  return (name, type, scope, paths) => ({
+    kind: "directory",
+    path: join(root(scope, paths), typeFolder(type), name),
+  });
+}
+
 function codexRoot(scope: InstallScope, paths: ToolPaths): string {
   return scope === "project" ? join(paths.projectDir, ".codex") : paths.codexHome;
+}
+
+function claudeCodeRoot(scope: InstallScope, paths: ToolPaths): string {
+  return join(scopeRoot(scope, paths), ".claude");
+}
+
+function hermesRoot(scope: InstallScope, paths: ToolPaths): string {
+  return join(scopeRoot(scope, paths), ".hermes");
 }
 
 function openclawRoot(scope: InstallScope, paths: ToolPaths): string {

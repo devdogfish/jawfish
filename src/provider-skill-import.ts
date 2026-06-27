@@ -14,7 +14,7 @@ import {
 import { pushAgenticsRepoChanges } from "./agentics-repo.ts";
 import { toolPaths } from "./config.ts";
 import {
-  destinationSpec,
+  sourceProviderSkillRoot,
   type InstallScope,
   typeFolder,
 } from "./tool-adapters.ts";
@@ -264,15 +264,7 @@ function skillRoot(
   scope: InstallScope,
   options: PathOptions = {},
 ): string {
-  return dirname(
-    destinationSpec(
-      "__jawfish_import_probe__",
-      "skill",
-      scope,
-      tool,
-      toolPaths(options.env, options.cwd),
-    ).path,
-  );
+  return sourceProviderSkillRoot(tool, scope, toolPaths(options.env, options.cwd));
 }
 
 function assertUniqueImportNames(skills: ImportableSkillCandidate[]): void {

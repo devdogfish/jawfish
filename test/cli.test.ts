@@ -24,6 +24,7 @@ import {
   configPath,
   defaultSupportedTools,
   loadConfig,
+  toolPaths,
   type JawfishConfig,
 } from "../src/config.ts";
 import {
@@ -31,6 +32,11 @@ import {
   type InitCommandPrompts,
 } from "../src/init-command.ts";
 import { normalizeSourceUrl } from "../src/main.ts";
+import {
+  destinationPath,
+  sourceProviderSkillRoot,
+  type InstallScope,
+} from "../src/tool-adapters.ts";
 
 const contexts: CliTestContext[] = [];
 
@@ -265,54 +271,42 @@ async function setupBulkUpdateAgenticsRepo(
 function installedFocusSkillPath(
   context: CliTestContext,
   tool: string,
-  scope: "project" | "global",
+  scope: InstallScope,
   codexHome: string,
 ): string {
   return join(
-    toolRoot(context, tool, scope, codexHome),
-    "skills",
-    "focus",
+    destinationPath("focus", "skill", scope, tool, testToolPaths(context, codexHome)),
     "SKILL.md",
   );
 }
 
-function toolRoot(
+function providerSkillRoot(
   context: CliTestContext,
   tool: string,
-  scope: "project" | "global",
+  scope: InstallScope,
   codexHome: string,
 ): string {
-  switch (tool) {
-    case "codex":
-      return scope === "project"
-        ? join(context.projectDir, ".codex")
-        : codexHome;
-    case "claude-code":
-      return join(scopeRoot(context, scope), ".claude");
-    case "hermes":
-      return join(scopeRoot(context, scope), ".hermes");
-    case "openclaw":
-      return scope === "project"
-        ? context.projectDir
-        : join(context.homeDir, ".openclaw");
-    case "opencode":
-      return scope === "project"
-        ? join(context.projectDir, ".opencode")
-        : join(context.homeDir, ".config", "opencode");
-    case "pi":
-      return scope === "project"
-        ? join(context.projectDir, ".pi")
-        : join(context.homeDir, ".pi", "agent");
-    default:
-      throw new Error(`Unsupported test tool: ${tool}`);
-  }
+  return sourceProviderSkillRoot(
+    tool,
+    scope,
+    testToolPaths(context, codexHome),
+  );
 }
 
-function scopeRoot(
+function testToolPaths(
   context: CliTestContext,
-  scope: "project" | "global",
-): string {
-  return scope === "project" ? context.projectDir : context.homeDir;
+  codexHome: string,
+) {
+  return toolPaths(
+    {
+      CODEX_HOME: codexHome,
+      HOME: context.homeDir,
+      JAWFISH_HOME: context.homeDir,
+      OPENCODE_CONFIG_DIR: join(context.homeDir, ".config", "opencode"),
+      XDG_CONFIG_HOME: join(context.homeDir, ".config"),
+    },
+    context.projectDir,
+  );
 }
 
 afterEach(async () => {
@@ -686,8 +680,9 @@ describe("jawfish CLI", () => {
       const codexHome = join(context.rootDir, "codex-home");
       const env: Record<string, string> =
         tool === "codex" ? { CODEX_HOME: codexHome } : {};
-      const providerSkillDir = dirname(
-        installedFocusSkillPath(context, tool, "global", codexHome),
+      const providerSkillDir = join(
+        providerSkillRoot(context, tool, "global", codexHome),
+        "focus",
       );
 
       await createGitRepository(agenticsRepoDir);

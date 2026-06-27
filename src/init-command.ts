@@ -10,7 +10,6 @@ import {
 } from "./agentics-repo.ts";
 import { readCatalog, writeCatalog, type Catalog } from "./catalog.ts";
 import {
-  assertSupportedConfiguredTool,
   configPath,
   defaultSupportedTools,
   deprecatedAgenticsRepoPath,
@@ -36,6 +35,7 @@ import {
   type ImportableSkillCandidate,
 } from "./provider-skill-import.ts";
 import { runCommand } from "./process.ts";
+import { assertSupportedTool } from "./tool-adapters.ts";
 
 interface InitCommandArgs {
   force: boolean;
@@ -187,7 +187,7 @@ const defaultInitPrompts: InitCommandPrompts = {
 
 async function createMachineSetup(context: InitContext): Promise<JawfishConfig> {
   const defaultTool = context.env.JAWFISH_DEFAULT_TOOL ?? firstSupportedTool();
-  assertSupportedConfiguredTool(defaultTool, "JAWFISH_DEFAULT_TOOL");
+  assertSupportedTool(defaultTool, "JAWFISH_DEFAULT_TOOL");
 
   const selection = await noninteractiveAgenticsRepoSelection(context);
   const config: JawfishConfig = {
@@ -205,7 +205,7 @@ async function createInteractiveMachineSetup(
   context: InitContext,
 ): Promise<JawfishConfig> {
   const defaultTool = await context.prompts.selectDefaultTool(defaultSupportedTools);
-  assertSupportedConfiguredTool(defaultTool, "selected default tool");
+  assertSupportedTool(defaultTool, "selected default tool");
 
   const repoMode = await context.prompts.selectAgenticsRepoMode();
   const selection = await resolveAgenticsRepoSelection(repoMode, context);
@@ -553,7 +553,7 @@ async function reinitializeDefaultTool(
   context: InitContext,
 ): Promise<JawfishConfig> {
   const defaultTool = await context.prompts.selectDefaultTool(defaultSupportedTools);
-  assertSupportedConfiguredTool(defaultTool, "selected default tool");
+  assertSupportedTool(defaultTool, "selected default tool");
 
   const nextConfig = { ...config, defaultTool };
   await saveConfig(nextConfig, { env: context.env });
@@ -822,7 +822,7 @@ function assertSelectedImportProvidersSupported(
   selectedProviderNames: string[],
 ): void {
   for (const provider of selectedProviderNames) {
-    assertSupportedConfiguredTool(provider, "selected import provider");
+    assertSupportedTool(provider, "selected import provider");
   }
 }
 
@@ -971,7 +971,7 @@ function configuredDefaultTool(config: JawfishConfig, context: InitContext): str
     throw new Error(`Missing defaultTool in ${configPath(jawfishHome(context.env))}`);
   }
 
-  assertSupportedConfiguredTool(config.defaultTool, "config defaultTool");
+  assertSupportedTool(config.defaultTool, "config defaultTool");
   return config.defaultTool;
 }
 
