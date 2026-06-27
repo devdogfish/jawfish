@@ -4002,6 +4002,16 @@ describe("jawfish CLI", () => {
     }
   });
 
+  test("rejects unknown commands before running command setup", async () => {
+    const context = await setup();
+
+    const result = await runJawfish(context, ["bogus"]);
+
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stderr, /Unknown command: bogus/);
+    assert.match(result.stderr, /Run jawfish --help for usage\./);
+  });
+
   test("upgrade updates jawfish through bun", async () => {
     const context = await setup();
     const fakeBinDir = join(context.rootDir, "bin");

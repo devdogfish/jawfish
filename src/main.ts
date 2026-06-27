@@ -73,27 +73,15 @@ import {
   planSkillImport,
   printImportSkillsPlan,
 } from "./provider-skill-import.ts";
+import {
+  formatCommandHelp,
+  formatRootHelp,
+  parseCommand,
+  type CommandArgs,
+  type InstalledFilter,
+} from "./command-grammar.ts";
 
 const version = "0.1.4";
-
-interface CommandSpec {
-  description: string;
-  summary: string;
-  usage: string;
-  options: string[];
-}
-
-interface ParsedArgs {
-  force: boolean;
-  global: boolean;
-  help: boolean;
-  installed?: string;
-  name?: string;
-  positionals: string[];
-  raw: boolean;
-  type?: string;
-  yes: boolean;
-}
 
 interface AcquiredSource {
   entryFile?: string;
@@ -160,113 +148,6 @@ interface PackageUpdate {
   sourcePath: string;
 }
 
-const commandSpecs = {
-  add: {
-    description:
-      "Install an agentic from the agentics repo, or import a URL/local path.",
-    summary: "Install or import an agentic",
-    usage: "jawfish add [options] <name|source>",
-    options: [
-      "-g, --global    Install globally",
-      "-y, --yes       For repo roots, select all non-conflicting skills",
-      "--name <name>   Override imported package name",
-      "-h, --help      Show help",
-    ],
-  },
-  init: {
-    description: "Create or edit jawfish machine/project setup.",
-    summary: "Create or edit setup",
-    usage: "jawfish init [options]",
-    options: [
-      "-y, --yes       Use noninteractive defaults",
-      "-h, --help      Show help",
-    ],
-  },
-  install: {
-    description:
-      "Install an agentic when a name/source is provided, otherwise materialize manifest jawfish.",
-    summary: "Install an agentic or manifest",
-    usage: "jawfish install [options] [name|source]",
-    options: [
-      "-g, --global    Install global manifest",
-      "-y, --yes       For repo roots, select all non-conflicting skills",
-      "--name <name>   Override imported package name",
-      "-h, --help      Show help",
-    ],
-  },
-  i: {
-    description:
-      "Alias for install: add a name/source, or materialize the manifest with no name/source.",
-    summary: "Alias for install",
-    usage: "jawfish i [options] [name|source]",
-    options: [
-      "-g, --global    Install global manifest",
-      "-y, --yes       For repo roots, select all non-conflicting skills",
-      "--name <name>   Override imported package name",
-      "-h, --help      Show help",
-    ],
-  },
-  "import-skills": {
-    description: "Import existing global skills from a supported tool.",
-    summary: "Import global provider skills",
-    usage: "jawfish import-skills [options] <provider>",
-    options: [
-      "-y, --yes      Import without prompting",
-      "-h, --help     Show help",
-    ],
-  },
-  list: {
-    description: "List available jawfish in the agentics repo.",
-    summary: "List available jawfish",
-    usage: "jawfish list [options]",
-    options: [
-      "--type <type>           Filter by skill, agent, or prompt",
-      "--installed <status>    Filter by project, global, both, none, or any",
-      "--raw                   Print JSON",
-      "-h, --help              Show help",
-    ],
-  },
-  update: {
-    description: "Refresh one or all upstream-backed jawfish.",
-    summary: "Update upstream-backed jawfish",
-    usage: "jawfish update [options] [name]",
-    options: [
-      "-g, --global    Reinstall global manifest if already installed",
-      "-F, --force     Replace dirty package contents",
-      "-h, --help      Show help",
-    ],
-  },
-  upgrade: {
-    description: "Upgrade the jawfish CLI itself.",
-    summary: "Upgrade jawfish itself",
-    usage: "jawfish upgrade",
-    options: ["-h, --help      Show help"],
-  },
-  remove: {
-    description: "Remove installed managed jawfish.",
-    summary: "Remove installed jawfish",
-    usage: "jawfish remove [options] <name>",
-    options: [
-      "-g, --global    Remove global install",
-      "-h, --help      Show help",
-    ],
-  },
-} as const satisfies Record<string, CommandSpec>;
-
-type CommandName = keyof typeof commandSpecs;
-const commandNames = Object.keys(commandSpecs) as CommandName[];
-const commandOptions: Record<CommandName, readonly string[]> = {
-  add: ["-g", "--global", "-y", "--yes", "--name", "-h", "--help"],
-  init: ["-y", "--yes", "-h", "--help"],
-  install: ["-g", "--global", "-y", "--yes", "--name", "-h", "--help"],
-  i: ["-g", "--global", "-y", "--yes", "--name", "-h", "--help"],
-  "import-skills": ["-y", "--yes", "-h", "--help"],
-  list: ["--type", "--installed", "--raw", "-h", "--help"],
-  update: ["-g", "--global", "-F", "--force", "-h", "--help"],
-  upgrade: ["-h", "--help"],
-  remove: ["-g", "--global", "-h", "--help"],
-};
-
 export async function promptForTool(tools: readonly string[]): Promise<string> {
   const selected = await select({
     message: "Select default tool",
@@ -299,54 +180,40 @@ export async function promptForAgenticType(
 }
 
 export async function run(argv: string[]): Promise<number> {
-  const [command, ...args] = argv;
-
   try {
-    if (command === undefined || isHelp(command)) {
-      printRootHelp();
-      return 0;
+    const request = parseCommand(argv);
+
+    switch (request.kind) {
+      case "root-help":
+        console.log(formatRootHelp(version));
+        return 0;
+      case "version":
+        console.log(version);
+        return 0;
+      case "command-help":
+        console.log(formatCommandHelp(request.command));
+        return 0;
+      case "dispatch":
+        break;
     }
 
-    if (command === "--version" || command === "-v") {
-      console.log(version);
-      return 0;
-    }
-
-    if (!isCommandName(command)) {
-      console.error(`Unknown command: ${command}`);
-      console.error("Run jawfish --help for usage.");
-      return 1;
-    }
-
-    const parsed = parseArgs(args, command);
-    if (parsed.help) {
-      printCommandHelp(command);
-      return 0;
-    }
-
-    switch (command) {
+    switch (request.handler) {
       case "add":
-        return await addCommand(parsed);
+        return await addCommand(request.args);
       case "init":
-        return await initCommand(parsed);
-      case "i":
-        return parsed.positionals.length > 0
-          ? await addCommand(parsed)
-          : await installCommand(parsed);
+        return await initCommand(request.args);
       case "install":
-        return parsed.positionals.length > 0
-          ? await addCommand(parsed)
-          : await installCommand(parsed);
+        return await installCommand(request.args);
       case "import-skills":
-        return await importSkillsCommand(parsed);
+        return await importSkillsCommand(request.args);
       case "list":
-        return await listCommand(parsed);
+        return await listCommand(request.args);
       case "remove":
-        return await removeCommand(parsed);
+        return await removeCommand(request.args);
       case "update":
-        return await updateCommand(parsed);
+        return await updateCommand(request.args);
       case "upgrade":
-        return await upgradeCommand(parsed);
+        return await upgradeCommand(request.args);
     }
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
@@ -354,12 +221,8 @@ export async function run(argv: string[]): Promise<number> {
   }
 }
 
-async function addCommand(args: ParsedArgs): Promise<number> {
-  const source = args.positionals[0];
-  if (source === undefined) {
-    console.error("Usage: jawfish add [options] <name|source>");
-    return 1;
-  }
+async function addCommand(args: CommandArgs): Promise<number> {
+  const source = args.positionals[0]!;
 
   const config = await loadConfig({ promptForMissingDefaultTool: false });
   const agenticsRepoDir = await resolveAgenticsRepo(config);
@@ -413,7 +276,7 @@ async function addCommand(args: ParsedArgs): Promise<number> {
   return 0;
 }
 
-async function installCommand(args: ParsedArgs): Promise<number> {
+async function installCommand(args: CommandArgs): Promise<number> {
   const config = await loadConfig({ promptForMissingDefaultTool: false });
   const agenticsRepoDir = await resolveAgenticsRepo(config);
   await syncAgenticsRepo(agenticsRepoDir);
@@ -438,33 +301,9 @@ async function installCommand(args: ParsedArgs): Promise<number> {
   return 0;
 }
 
-async function listCommand(args: ParsedArgs): Promise<number> {
-  if (
-    args.force ||
-    args.global ||
-    args.name !== undefined ||
-    args.positionals.length > 0 ||
-    args.yes
-  ) {
-    console.error("Usage: jawfish list [options]");
-    return 1;
-  }
-
+async function listCommand(args: CommandArgs): Promise<number> {
   const type = args.type;
-  if (type !== undefined && !isAgenticType(type)) {
-    console.error(
-      `Unsupported type: ${type}. Supported types: ${agenticTypes.join(", ")}`,
-    );
-    return 1;
-  }
-
   const installed = args.installed;
-  if (installed !== undefined && !isInstalledFilter(installed)) {
-    console.error(
-      `Unsupported installed filter: ${installed}. Supported filters: ${installedFilters.join(", ")}`,
-    );
-    return 1;
-  }
 
   const config = await loadConfig({ promptForMissingDefaultTool: false });
   const agenticsRepoDir = await resolveAgenticsRepo(config);
@@ -495,18 +334,8 @@ async function listCommand(args: ParsedArgs): Promise<number> {
   return 0;
 }
 
-async function importSkillsCommand(args: ParsedArgs): Promise<number> {
-  const provider = args.positionals[0];
-  if (
-    provider === undefined ||
-    args.positionals.length !== 1 ||
-    args.force ||
-    args.global ||
-    args.name !== undefined
-  ) {
-    console.error("Usage: jawfish import-skills [options] <provider>");
-    return 1;
-  }
+async function importSkillsCommand(args: CommandArgs): Promise<number> {
+  const provider = args.positionals[0]!;
 
   assertSupportedConfiguredTool(provider, "provider");
 
@@ -542,17 +371,7 @@ async function importSkillsCommand(args: ParsedArgs): Promise<number> {
   return 0;
 }
 
-async function upgradeCommand(args: ParsedArgs): Promise<number> {
-  if (
-    args.force ||
-    args.global ||
-    args.name !== undefined ||
-    args.positionals.length > 0
-  ) {
-    console.error("Usage: jawfish upgrade");
-    return 1;
-  }
-
+async function upgradeCommand(args: CommandArgs): Promise<number> {
   console.log("Upgrading jawfish with bun...");
   const result = await runCommand(
     "bun",
@@ -565,12 +384,8 @@ async function upgradeCommand(args: ParsedArgs): Promise<number> {
   return result.exitCode === 0 ? 0 : 1;
 }
 
-async function removeCommand(args: ParsedArgs): Promise<number> {
-  const name = args.positionals[0];
-  if (name === undefined) {
-    console.error("Usage: jawfish remove [options] <name>");
-    return 1;
-  }
+async function removeCommand(args: CommandArgs): Promise<number> {
+  const name = args.positionals[0]!;
 
   const config = await loadConfig({ promptForMissingDefaultTool: false });
   const agenticsRepoDir = await resolveAgenticsRepo(config);
@@ -604,7 +419,7 @@ async function removeCommand(args: ParsedArgs): Promise<number> {
   return 0;
 }
 
-async function updateCommand(args: ParsedArgs): Promise<number> {
+async function updateCommand(args: CommandArgs): Promise<number> {
   const config = await loadConfig({ promptForMissingDefaultTool: false });
   const agenticsRepoDir = await resolveAgenticsRepo(config);
   const catalog = await readCatalog(agenticsRepoDir);
@@ -721,7 +536,7 @@ async function importAndInstallRepoSkills(
   agenticsRepoDir: string,
   catalog: Catalog,
   repoSource: RepoSource,
-  args: ParsedArgs,
+  args: CommandArgs,
   scope: InstallScope,
   config: JawfishConfig,
 ): Promise<RepoSkillImportResult> {
@@ -1860,8 +1675,6 @@ interface ListCatalogEntry {
 }
 
 type InstalledStatus = "project" | "global" | "both" | "-";
-const installedFilters = ["project", "global", "both", "none", "any"] as const;
-type InstalledFilter = (typeof installedFilters)[number];
 
 function catalogEntriesForList(
   agenticsRepoDir: string,
@@ -1903,10 +1716,6 @@ function installedStatus(
   }
 
   return "-";
-}
-
-function isInstalledFilter(value: string): value is InstalledFilter {
-  return installedFilters.includes(value as InstalledFilter);
 }
 
 function matchesInstalledFilter(
@@ -2042,7 +1851,7 @@ function inferPackageName(packagePath: string): string {
   return basename(packagePath).replace(/\.[^.]+$/, "");
 }
 
-function getScope(args: ParsedArgs): InstallScope {
+function getScope(args: CommandArgs): InstallScope {
   return args.global ? "global" : "project";
 }
 
@@ -2055,146 +1864,6 @@ async function isBareRepository(path: string): Promise<boolean> {
   );
 
   return result.exitCode === 0 && result.stdout.trim() === "true";
-}
-
-function parseArgs(args: string[], command: CommandName): ParsedArgs {
-  const parsed: ParsedArgs = {
-    force: false,
-    global: false,
-    help: false,
-    positionals: [],
-    raw: false,
-    yes: false,
-  };
-
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    switch (arg) {
-      case "-F":
-      case "--force":
-        assertAllowedOption(command, arg);
-        parsed.force = true;
-        break;
-      case "-g":
-      case "--global":
-        assertAllowedOption(command, arg);
-        parsed.global = true;
-        break;
-      case "-h":
-      case "--help":
-        assertAllowedOption(command, arg);
-        parsed.help = true;
-        break;
-      case "-y":
-      case "--yes":
-        assertAllowedOption(command, arg);
-        parsed.yes = true;
-        break;
-      case "--raw":
-        assertAllowedOption(command, arg);
-        parsed.raw = true;
-        break;
-      case "--name": {
-        assertAllowedOption(command, arg);
-        const name = args[index + 1];
-        if (name === undefined) {
-          throw new Error(missingOptionValueMessage(command, "--name"));
-        }
-
-        parsed.name = name;
-        index += 1;
-        break;
-      }
-      case "--type": {
-        assertAllowedOption(command, arg);
-        const type = args[index + 1];
-        if (type === undefined) {
-          throw new Error(missingOptionValueMessage(command, "--type"));
-        }
-
-        parsed.type = type;
-        index += 1;
-        break;
-      }
-      case "--installed": {
-        assertAllowedOption(command, arg);
-        const installed = args[index + 1];
-        if (installed === undefined) {
-          throw new Error(missingOptionValueMessage(command, "--installed"));
-        }
-
-        parsed.installed = installed;
-        index += 1;
-        break;
-      }
-      default:
-        if (arg.startsWith("-")) {
-          throw new Error(optionErrorMessage(command, "Unknown option", arg));
-        }
-
-        parsed.positionals.push(arg);
-        break;
-    }
-  }
-
-  return parsed;
-}
-
-function assertAllowedOption(command: CommandName, option: string): void {
-  if (!commandOptions[command].includes(option)) {
-    throw new Error(optionErrorMessage(command, "Unsupported option", option));
-  }
-}
-
-function missingOptionValueMessage(
-  command: CommandName,
-  option: string,
-): string {
-  return `${option} requires a value\n${usageLine(command)}`;
-}
-
-function optionErrorMessage(
-  command: CommandName,
-  message: string,
-  option: string,
-): string {
-  return `${message}: ${option}\n${usageLine(command)}`;
-}
-
-function usageLine(command: CommandName): string {
-  return `Usage: ${commandSpecs[command].usage}`;
-}
-
-function printRootHelp(): void {
-  const commandWidth =
-    Math.max(...commandNames.map((command) => command.length)) + 2;
-
-  console.log(`jawfish ${version}
-
-Usage: jawfish <command> [options]
-
-Commands:
-${commandNames
-  .map(
-    (command) =>
-      `  ${command.padEnd(commandWidth)}${commandSpecs[command].summary}`,
-  )
-  .join("\n")}
-
-Options:
-  -h, --help      Show help
-  -v, --version   Show version`);
-}
-
-function printCommandHelp(command: CommandName): void {
-  const spec = commandSpecs[command];
-
-  console.log(`${spec.description}
-
-Usage: ${spec.usage}
-
-Options:
-${spec.options.map((option) => `  ${option}`).join("\n")}`);
 }
 
 async function syncAgenticsRepo(agenticsRepoDir: string): Promise<void> {
@@ -2240,14 +1909,6 @@ function isUrl(value: string): boolean {
 }
 
 const promptExtensions = new Set([".md", ".txt", ".prompt"]);
-
-function isHelp(value: string): boolean {
-  return value === "--help" || value === "-h";
-}
-
-function isCommandName(value: string): value is CommandName {
-  return Object.hasOwn(commandSpecs, value);
-}
 
 function catalogHasAgentic(catalog: Catalog, name: string): boolean {
   return Object.hasOwn(catalog.jawfish, name);

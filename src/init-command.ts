@@ -38,12 +38,6 @@ import {
 import { runCommand } from "./process.ts";
 
 interface InitCommandArgs {
-  force: boolean;
-  global: boolean;
-  name?: string;
-  positionals: string[];
-  raw: boolean;
-  type?: string;
   yes: boolean;
 }
 
@@ -112,18 +106,6 @@ export async function initCommand(
   options: InitCommandOptions = {},
 ): Promise<number> {
   const context = initContext(options);
-
-  if (
-    args.force ||
-    args.global ||
-    args.name !== undefined ||
-    args.positionals.length > 0 ||
-    args.raw ||
-    args.type !== undefined
-  ) {
-    console.error("Usage: jawfish init [options]");
-    return 1;
-  }
 
   const configFile = await existingConfigPath(context.env);
   if (configFile === undefined) {
