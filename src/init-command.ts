@@ -43,6 +43,7 @@ import {
   type InitAgenticsRepoUpdate,
   type InitImportSkillsResult,
   type InitWorkflowRuntime,
+  type InitWorkflowSetupMode,
   type MachineReinitializeAction,
 } from "./init-workflow.ts";
 
@@ -100,7 +101,7 @@ export async function initCommand(
   options: InitCommandOptions = {},
 ): Promise<number> {
   const context = initContext(options);
-  return await runInitWorkflow(args, initWorkflowRuntime(context));
+  return runInitWorkflow(args, initWorkflowRuntime(context));
 }
 
 function hasCompleteMachineSetupEnv(context: InitContext): boolean {
@@ -129,14 +130,9 @@ function initWorkflowRuntime(
       (await existingConfigPath(context.env)) !== undefined,
     hasProjectManifest: () =>
       exists(manifestPath("project", context.env, context.cwd)),
-    importSkills: async (config) => {
-      const session = await configuredAgenticsRepoSession(config, context);
-      return await importSelectedSkills(session, context);
-    },
-    inspectAgenticsRepo: async (config) =>
-      config.agenticsRepo === undefined || config.agenticsRepo === ""
-        ? emptyAgenticsRepoInspection()
-        : await (await configuredAgenticsRepoSession(config, context)).inspect(),
+    importSkills: (config) => importConfiguredSkills(config, context),
+    inspectAgenticsRepo: (config) =>
+      inspectConfiguredAgenticsRepo(config, context),
     installGlobalStarterAgentics: async (config, inspection, selected) => {
       await installGlobalStarterAgentics(
         config,
@@ -174,10 +170,7 @@ function initWorkflowRuntime(
       updatedAgenticsRepo: async (update) => printUpdatedAgenticsRepo(update),
       updatedDefaultTool: async (config) => printUpdatedDefaultTool(config),
     },
-    prepareMachineSetup: (mode) =>
-      mode === "noninteractive"
-        ? prepareNoninteractiveMachineSetup(context)
-        : prepareInteractiveMachineSetup(context),
+    prepareMachineSetup: (mode) => prepareMachineSetup(mode, context),
     readGlobalManifest: () => readManifest("global", pathOptions(context)),
     readProjectManifest: () => readManifest("project", pathOptions(context)),
     reinitializeAgenticsRepo: (config) =>
@@ -204,6 +197,14 @@ function pathOptions(
   return { cwd: context.cwd, env: context.env };
 }
 
+function optionalAgenticsRepo(config: JawfishConfig): string | undefined {
+  if (config.agenticsRepo === undefined || config.agenticsRepo === "") {
+    return undefined;
+  }
+
+  return config.agenticsRepo;
+}
+
 const defaultInitPrompts: InitCommandPrompts = {
   inputAgenticsRepo: promptForAgenticsRepo,
   inputAgenticsRepoLocalPath: promptForAgenticsRepoLocalPath,
@@ -216,6 +217,18 @@ const defaultInitPrompts: InitCommandPrompts = {
   selectImportProviders: promptForImportProviders,
   selectMachineReinitializeAction: promptForMachineReinitializeAction,
 };
+
+async function prepareMachineSetup(
+  mode: InitWorkflowSetupMode,
+  context: InitContext,
+): Promise<JawfishConfig> {
+  switch (mode) {
+    case "interactive":
+      return prepareInteractiveMachineSetup(context);
+    case "noninteractive":
+      return prepareNoninteractiveMachineSetup(context);
+  }
+}
 
 async function prepareNoninteractiveMachineSetup(
   context: InitContext,
@@ -328,7 +341,8 @@ async function inputAgenticsRepoLocalPath(
   }
 
   const selected = await prompt(defaultPath);
-  return selected.trim() === "" ? defaultPath : selected.trim();
+  const trimmed = selected.trim();
+  return trimmed === "" ? defaultPath : trimmed;
 }
 
 async function inputAgenticsRepoRemote(
@@ -367,11 +381,12 @@ async function validateMachineSetup(context: InitContext): Promise<JawfishConfig
     env: context.env,
     promptForMissingDefaultTool: false,
   });
-  if (config.agenticsRepo === undefined || config.agenticsRepo === "") {
+  const agenticsRepo = optionalAgenticsRepo(config);
+  if (agenticsRepo === undefined) {
     return config;
   }
 
-  assertAgenticsRepoPathSupported(config.agenticsRepo, pathOptions(context));
+  assertAgenticsRepoPathSupported(agenticsRepo, pathOptions(context));
   return config;
 }
 
@@ -390,7 +405,7 @@ async function selectExistingMachineInitAction(
   const prompt =
     context.prompts.selectExistingMachineInitAction ??
     promptForExistingMachineInitAction;
-  return await prompt(hasProjectManifest);
+  return prompt(hasProjectManifest);
 }
 
 async function selectMachineReinitializeAction(
@@ -400,7 +415,7 @@ async function selectMachineReinitializeAction(
   const prompt =
     context.prompts.selectMachineReinitializeAction ??
     promptForMachineReinitializeAction;
-  return await prompt(config);
+  return prompt(config);
 }
 
 async function printMachineConfig(
@@ -409,10 +424,11 @@ async function printMachineConfig(
 ): Promise<void> {
   console.log("Current machine config");
   console.log(`Default tool: ${config.defaultTool ?? "missing"}`);
-  if (config.agenticsRepo === undefined || config.agenticsRepo === "") {
+  const agenticsRepo = optionalAgenticsRepo(config);
+  if (agenticsRepo === undefined) {
     console.log("Agentics repo local: missing");
   } else {
-    await printAgenticsRepoLocation(config.agenticsRepo, context);
+    await printAgenticsRepoLocation(agenticsRepo, context);
   }
   console.log(`Config: ${configPath(jawfishHome(context.env))}`);
 }
@@ -425,11 +441,12 @@ async function printConfiguredAgenticsRepoLocation(
   config: JawfishConfig,
   context: InitContext,
 ): Promise<void> {
-  if (config.agenticsRepo === undefined || config.agenticsRepo === "") {
+  const agenticsRepo = optionalAgenticsRepo(config);
+  if (agenticsRepo === undefined) {
     return;
   }
 
-  await printAgenticsRepoLocation(config.agenticsRepo, context);
+  await printAgenticsRepoLocation(agenticsRepo, context);
 }
 
 function printProjectInitialized(context: InitContext): void {
@@ -557,6 +574,14 @@ async function importSelectedProviders(
   }
 }
 
+async function importConfiguredSkills(
+  config: JawfishConfig,
+  context: InitContext,
+): Promise<InitImportSkillsResult> {
+  const session = await configuredAgenticsRepoSession(config, context);
+  return importSelectedSkills(session, context);
+}
+
 async function installGlobalStarterAgentics(
   config: JawfishConfig,
   agenticsRepoDir: string,
@@ -590,7 +615,7 @@ async function selectGlobalStarterAgentics(
     return [];
   }
 
-  return await prompt(inspection, manifest);
+  return prompt(inspection, manifest);
 }
 
 async function installProjectAgentics(
@@ -622,7 +647,7 @@ async function selectProjectAgentics(
   manifest: Manifest,
 ): Promise<string[]> {
   const prompt = context.prompts.selectProjectAgentics ?? promptForProjectAgentics;
-  return await prompt(inspection, manifest);
+  return prompt(inspection, manifest);
 }
 
 function assertSelectedAgenticsAvailable(
@@ -802,11 +827,12 @@ function configuredAgenticsRepo(
   config: JawfishConfig,
   context: InitContext,
 ): string {
-  if (config.agenticsRepo === undefined || config.agenticsRepo === "") {
+  const agenticsRepo = optionalAgenticsRepo(config);
+  if (agenticsRepo === undefined) {
     throw new Error(`Missing agenticsRepo in ${configPath(jawfishHome(context.env))}`);
   }
 
-  return config.agenticsRepo;
+  return agenticsRepo;
 }
 
 async function configuredAgenticsRepoDir(
@@ -814,7 +840,7 @@ async function configuredAgenticsRepoDir(
   context: InitContext,
 ): Promise<string> {
   const agenticsRepo = configuredAgenticsRepo(config, context);
-  return await inspectionAgenticsRepoDir(agenticsRepo, pathOptions(context));
+  return inspectionAgenticsRepoDir(agenticsRepo, pathOptions(context));
 }
 
 async function configuredAgenticsRepoSession(
@@ -824,6 +850,22 @@ async function configuredAgenticsRepoSession(
   return createAgenticsRepoSession(
     await configuredAgenticsRepoDir(config, context),
   );
+}
+
+async function inspectConfiguredAgenticsRepo(
+  config: JawfishConfig,
+  context: InitContext,
+): Promise<AgenticsRepoInspection> {
+  const agenticsRepo = optionalAgenticsRepo(config);
+  if (agenticsRepo === undefined) {
+    return emptyAgenticsRepoInspection();
+  }
+
+  const agenticsRepoDir = await inspectionAgenticsRepoDir(
+    agenticsRepo,
+    pathOptions(context),
+  );
+  return createAgenticsRepoSession(agenticsRepoDir).inspect();
 }
 
 function emptyAgenticsRepoInspection(): AgenticsRepoInspection {
@@ -882,7 +924,7 @@ function formatCount(count: number, singular: string): string {
   return `${count} ${count === 1 ? singular : `${singular}s`}`;
 }
 
-function formatNames(names: string[]): string {
+function formatNames(names: readonly string[]): string {
   if (names.length === 0) {
     return "none";
   }

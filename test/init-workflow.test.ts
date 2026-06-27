@@ -23,7 +23,11 @@ function importResult(
   kind: InitImportSkillsResult["kind"],
   count = 0,
 ): InitImportSkillsResult {
-  return kind === "imported" ? { count, kind } : { kind };
+  if (kind === "imported") {
+    return { count, kind };
+  }
+
+  return { kind };
 }
 
 function createRuntime(
@@ -45,7 +49,9 @@ function createRuntime(
 
   const runtime: InitWorkflowRuntime<TestConfig, TestInspection, TestManifest> = {
     emit: ({ action, state }) => {
-      calls.push(action === undefined ? `state:${state}` : `state:${state}:${action}`);
+      const transition =
+        action === undefined ? `state:${state}` : `state:${state}:${action}`;
+      calls.push(transition);
     },
     ensureGlobalManifest: async () => {
       calls.push("ensure-global-manifest");

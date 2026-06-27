@@ -32,6 +32,8 @@ export interface InitWorkflowArgs {
   yes: boolean;
 }
 
+export type InitWorkflowSetupMode = "interactive" | "noninteractive";
+
 export interface InitWorkflowInspection {
   usableNames: readonly string[];
 }
@@ -89,7 +91,7 @@ export interface InitWorkflowRuntime<
     selectedNames: string[],
   ) => Promise<void>;
   output: InitWorkflowOutput<TConfig, TInspection>;
-  prepareMachineSetup: (mode: "interactive" | "noninteractive") => Promise<TConfig>;
+  prepareMachineSetup: (mode: InitWorkflowSetupMode) => Promise<TConfig>;
   readGlobalManifest: () => Promise<TManifest>;
   readProjectManifest: () => Promise<TManifest>;
   reinitializeAgenticsRepo: (
@@ -127,19 +129,14 @@ export async function runInitWorkflow<
   runtime: InitWorkflowRuntime<TConfig, TInspection, TManifest>,
 ): Promise<number> {
   if (!(await runtime.hasMachineConfig())) {
-    return await runMissingMachineSetupWorkflow(args, runtime);
+    return runMissingMachineSetupWorkflow(args, runtime);
   }
 
   const config = await runtime.validateMachineSetup();
   await emit(runtime, { state: "existing-machine-setup" });
 
   if (args.yes) {
-    await emit(runtime, { state: "noninteractive-project-setup" });
-    await runtime.ensureProjectManifest();
-    await runtime.output.projectInitialized();
-    await runtime.output.agenticsRepoInspection(
-      await runtime.inspectAgenticsRepo(config),
-    );
+    await runNoninteractiveProjectSetupWorkflow(config, runtime);
     return 0;
   }
 
@@ -155,19 +152,13 @@ async function runMissingMachineSetupWorkflow<
   args: InitWorkflowArgs,
   runtime: InitWorkflowRuntime<TConfig, TInspection, TManifest>,
 ): Promise<number> {
-  const noninteractive = args.yes || runtime.hasCompleteMachineSetupEnv();
-  await emit(runtime, {
-    state: noninteractive
-      ? "noninteractive-machine-setup"
-      : "first-run-machine-setup",
-  });
+  const setupMode = resolveMachineSetupMode(args, runtime);
+  await emit(runtime, { state: machineSetupState(setupMode) });
   await emit(runtime, { state: "agentics-repo-preparation" });
 
-  const config = await runtime.prepareMachineSetup(
-    noninteractive ? "noninteractive" : "interactive",
-  );
+  const config = await runtime.prepareMachineSetup(setupMode);
 
-  if (!noninteractive) {
+  if (setupMode === "interactive") {
     await runMachineStarterSetupWorkflow(config, runtime);
   }
 
@@ -184,6 +175,22 @@ async function runMissingMachineSetupWorkflow<
 
   await runProjectSetupWorkflow(config, runtime);
   return 0;
+}
+
+async function runNoninteractiveProjectSetupWorkflow<
+  TConfig,
+  TInspection extends InitWorkflowInspection,
+  TManifest,
+>(
+  config: TConfig,
+  runtime: InitWorkflowRuntime<TConfig, TInspection, TManifest>,
+): Promise<void> {
+  await emit(runtime, { state: "noninteractive-project-setup" });
+  await runtime.ensureProjectManifest();
+  await runtime.output.projectInitialized();
+
+  const inspection = await runtime.inspectAgenticsRepo(config);
+  await runtime.output.agenticsRepoInspection(inspection);
 }
 
 async function runExistingMachineSetupWorkflow<
@@ -309,7 +316,8 @@ async function runMigrationImportWorkflow<
   runtime: InitWorkflowRuntime<TConfig, TInspection, TManifest>,
 ): Promise<void> {
   await emit(runtime, { state: "migration-import" });
-  await runtime.output.importSkillsResult(await runtime.importSkills(config));
+  const result = await runtime.importSkills(config);
+  await runtime.output.importSkillsResult(result);
 }
 
 async function runGlobalStarterInstallWorkflow<
@@ -383,4 +391,28 @@ async function emit<
 
 function hasUsableAgentics(inspection: InitWorkflowInspection): boolean {
   return inspection.usableNames.length > 0;
+}
+
+function resolveMachineSetupMode<
+  TConfig,
+  TInspection extends InitWorkflowInspection,
+  TManifest,
+>(
+  args: InitWorkflowArgs,
+  runtime: InitWorkflowRuntime<TConfig, TInspection, TManifest>,
+): InitWorkflowSetupMode {
+  if (args.yes || runtime.hasCompleteMachineSetupEnv()) {
+    return "noninteractive";
+  }
+
+  return "interactive";
+}
+
+function machineSetupState(mode: InitWorkflowSetupMode): InitWorkflowState {
+  switch (mode) {
+    case "interactive":
+      return "first-run-machine-setup";
+    case "noninteractive":
+      return "noninteractive-machine-setup";
+  }
 }
