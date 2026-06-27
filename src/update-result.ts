@@ -37,11 +37,15 @@ export function updateFailure(
 }
 
 export function formatUpdateResult(result: UpdateResult): string {
-  if (result.kind === "single") {
-    return `Updated ${result.name}`;
+  switch (result.kind) {
+    case "single":
+      return `Updated ${result.name}`;
+    case "bulk":
+      return formatBulkUpdateSummary(result.summary);
   }
+}
 
-  const { summary } = result;
+function formatBulkUpdateSummary(summary: BulkUpdateSummary): string {
   return [
     `Updated: ${formatSummaryNames(summary.updated)}`,
     `Skipped: ${formatSummaryNames(summary.skipped)}`,
@@ -54,13 +58,25 @@ export function formatUpdateDiagnostics(result: UpdateResult): string {
     return "";
   }
 
-  return result.summary.failed
+  return formatFailureDiagnostics(result.summary.failed);
+}
+
+function formatFailureDiagnostics(failures: BulkUpdateFailure[]): string {
+  return failures
     .map((failure) => `Failed to update ${failure.name}:\n${failure.details}`)
     .join("\n");
 }
 
 export function updateResultExitCode(result: UpdateResult): number {
-  return result.kind === "bulk" && result.summary.failed.length > 0 ? 1 : 0;
+  if (result.kind === "single") {
+    return 0;
+  }
+
+  if (result.summary.failed.length > 0) {
+    return 1;
+  }
+
+  return 0;
 }
 
 function formatSummaryNames(names: string[]): string {

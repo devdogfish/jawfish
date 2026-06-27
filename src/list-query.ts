@@ -29,23 +29,34 @@ export interface ListResultEntry {
 export type InstalledStatus = "project" | "global" | "both" | "-";
 
 export function queryListCatalog(query: ListQuery): ListResult {
-  const entries = Object.entries(query.catalog.jawfish)
-    .filter(([, entry]) => query.type === undefined || entry.type === query.type)
-    .map(([name, entry]) => ({
-      description: entry.description,
+  const {
+    agenticsRepoDir,
+    catalog,
+    globalManifest,
+    installed: installedFilter,
+    projectManifest,
+    type: typeFilter,
+  } = query;
+  const entries = Object.entries(catalog.jawfish)
+    .filter(
+      ([, catalogEntry]) =>
+        typeFilter === undefined || catalogEntry.type === typeFilter,
+    )
+    .map(([name, catalogEntry]) => ({
+      description: catalogEntry.description,
       installed: installedStatus(
         name,
-        query.projectManifest,
-        query.globalManifest,
+        projectManifest,
+        globalManifest,
       ),
       name,
-      path: compactHomePath(resolveInside(query.agenticsRepoDir, entry.path)),
-      type: entry.type,
+      path: compactHomePath(resolveInside(agenticsRepoDir, catalogEntry.path)),
+      type: catalogEntry.type,
     }))
     .filter(
       (entry) =>
-        query.installed === undefined ||
-        matchesInstalledFilter(entry.installed, query.installed),
+        installedFilter === undefined ||
+        matchesInstalledFilter(entry.installed, installedFilter),
     )
     .sort((left, right) => left.name.localeCompare(right.name));
 

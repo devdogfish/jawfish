@@ -23,9 +23,28 @@ test("formats list results as table and raw JSON", () => {
     ],
   };
 
-  assert.match(
+  assert.equal(
     formatListTable(result),
-    /│ focus\s+│ skill\s+│ project\s+│ Focus workflow/,
+    [
+      "┌────────┬───────┬───────────┬────────────────┐",
+      "│ name   │ type  │ installed │ description    │",
+      "├────────┼───────┼───────────┼────────────────┤",
+      "│ focus  │ skill │ project   │ Focus workflow │",
+      "│ review │ agent │ both      │ Review changes │",
+      "└────────┴───────┴───────────┴────────────────┘",
+    ].join("\n"),
   );
   assert.deepEqual(JSON.parse(formatListRawJson(result)), result.entries);
+});
+
+test("formats an empty list result as a header-only table", () => {
+  assert.equal(
+    formatListTable({ entries: [] }),
+    [
+      "┌──────┬──────┬───────────┬─────────────┐",
+      "│ name │ type │ installed │ description │",
+      "├──────┼──────┼───────────┼─────────────┤",
+      "└──────┴──────┴───────────┴─────────────┘",
+    ].join("\n"),
+  );
 });

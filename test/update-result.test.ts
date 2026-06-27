@@ -30,8 +30,9 @@ test("formats update result summaries and diagnostics", () => {
     "Failed to update plan:\nPackage has dirty local changes: plan\n  prompts/plan/plan.md",
   );
   assert.equal(updateResultExitCode(result), 1);
-  assert.equal(
-    formatUpdateResult(updatedPackageResult("focus")),
-    "Updated focus",
-  );
+
+  const single = updatedPackageResult("focus");
+  assert.equal(formatUpdateResult(single), "Updated focus");
+  assert.equal(formatUpdateDiagnostics(single), "");
+  assert.equal(updateResultExitCode(single), 0);
 });
