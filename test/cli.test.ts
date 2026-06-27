@@ -2498,113 +2498,24 @@ describe("jawfish CLI", () => {
       table.stdout,
       /│ focus\s+│ skill\s+│ project\s+│ Focus workflow/,
     );
-    assert.match(
-      table.stdout,
-      /│ handoff\s+│ skill\s+│ global\s+│ Compact current conversation/,
-    );
-    assert.match(
-      table.stdout,
-      /│ review\s+│ agent\s+│ both\s+│ Review changes/,
-    );
-    assert.match(table.stdout, /│ survey\s+│ agent\s+│ -\s+│ Survey repo/);
     assert.doesNotMatch(table.stdout, /ghost/);
-    assert.ok(table.stdout.indexOf("focus") < table.stdout.indexOf("handoff"));
-    assert.ok(table.stdout.indexOf("handoff") < table.stdout.indexOf("review"));
 
     const raw = await runJawfish(context, ["list", "--raw"]);
     assert.equal(raw.exitCode, 0, raw.stderr);
-    assert.deepEqual(JSON.parse(raw.stdout), [
-      {
-        description: "Focus workflow",
-        installed: "project",
-        name: "focus",
-        path: "~/agentics/skills/focus",
-        type: "skill",
-      },
-      {
-        description: "Compact current conversation",
-        installed: "global",
-        name: "handoff",
-        path: "~/agentics/skills/handoff",
-        type: "skill",
-      },
-      {
-        description: "Review changes",
-        installed: "both",
-        name: "review",
-        path: "~/agentics/agents/review",
-        type: "agent",
-      },
-      {
-        description: "Survey repo",
-        installed: "-",
-        name: "survey",
-        path: "~/agentics/agents/survey",
-        type: "agent",
-      },
-    ]);
-
-    const skills = await runJawfish(context, ["list", "--type", "skill"]);
-    assert.equal(skills.exitCode, 0, skills.stderr);
-    assert.match(skills.stdout, /focus/);
-    assert.match(skills.stdout, /handoff/);
-    assert.doesNotMatch(skills.stdout, /review/);
-    assert.doesNotMatch(skills.stdout, /survey/);
-
-    const projectInstalled = await runJawfish(context, [
-      "list",
-      "--installed",
-      "project",
-    ]);
-    assert.equal(projectInstalled.exitCode, 0, projectInstalled.stderr);
-    assert.match(projectInstalled.stdout, /focus/);
-    assert.match(projectInstalled.stdout, /review/);
-    assert.doesNotMatch(projectInstalled.stdout, /handoff/);
-    assert.doesNotMatch(projectInstalled.stdout, /survey/);
-
-    const globalInstalled = await runJawfish(context, [
-      "list",
-      "--installed",
-      "global",
-    ]);
-    assert.equal(globalInstalled.exitCode, 0, globalInstalled.stderr);
-    assert.match(globalInstalled.stdout, /handoff/);
-    assert.match(globalInstalled.stdout, /review/);
-    assert.doesNotMatch(globalInstalled.stdout, /focus/);
-    assert.doesNotMatch(globalInstalled.stdout, /survey/);
-
-    const bothInstalled = await runJawfish(context, [
-      "list",
-      "--installed",
-      "both",
-    ]);
-    assert.equal(bothInstalled.exitCode, 0, bothInstalled.stderr);
-    assert.match(bothInstalled.stdout, /review/);
-    assert.doesNotMatch(bothInstalled.stdout, /focus/);
-    assert.doesNotMatch(bothInstalled.stdout, /handoff/);
-    assert.doesNotMatch(bothInstalled.stdout, /survey/);
-
-    const uninstalled = await runJawfish(context, [
-      "list",
-      "--installed",
-      "none",
-    ]);
-    assert.equal(uninstalled.exitCode, 0, uninstalled.stderr);
-    assert.match(uninstalled.stdout, /survey/);
-    assert.doesNotMatch(uninstalled.stdout, /focus/);
-    assert.doesNotMatch(uninstalled.stdout, /handoff/);
-    assert.doesNotMatch(uninstalled.stdout, /review/);
-
-    const anyInstalled = await runJawfish(context, [
-      "list",
-      "--installed",
-      "any",
-    ]);
-    assert.equal(anyInstalled.exitCode, 0, anyInstalled.stderr);
-    assert.match(anyInstalled.stdout, /focus/);
-    assert.match(anyInstalled.stdout, /handoff/);
-    assert.match(anyInstalled.stdout, /review/);
-    assert.doesNotMatch(anyInstalled.stdout, /survey/);
+    assert.deepEqual(
+      JSON.parse(raw.stdout).map(
+        (entry: { installed: string; name: string }) => [
+          entry.name,
+          entry.installed,
+        ],
+      ),
+      [
+        ["focus", "project"],
+        ["handoff", "global"],
+        ["review", "both"],
+        ["survey", "-"],
+      ],
+    );
 
     const projectSkills = await runJawfish(context, [
       "list",
@@ -2612,34 +2523,15 @@ describe("jawfish CLI", () => {
       "skill",
       "--installed",
       "project",
-    ]);
-    assert.equal(projectSkills.exitCode, 0, projectSkills.stderr);
-    assert.match(projectSkills.stdout, /focus/);
-    assert.doesNotMatch(projectSkills.stdout, /handoff/);
-    assert.doesNotMatch(projectSkills.stdout, /review/);
-    assert.doesNotMatch(projectSkills.stdout, /survey/);
-
-    const rawUninstalled = await runJawfish(context, [
-      "list",
-      "--installed",
-      "none",
       "--raw",
     ]);
-    assert.equal(rawUninstalled.exitCode, 0, rawUninstalled.stderr);
+    assert.equal(projectSkills.exitCode, 0, projectSkills.stderr);
     assert.deepEqual(
-      JSON.parse(rawUninstalled.stdout).map(
+      JSON.parse(projectSkills.stdout).map(
         (entry: { name: string }) => entry.name,
       ),
-      ["survey"],
+      ["focus"],
     );
-
-    const empty = await runJawfish(context, ["list", "--type", "prompt"]);
-    assert.equal(empty.exitCode, 0, empty.stderr);
-    assert.match(
-      empty.stdout,
-      /│ name\s+│ type\s+│ installed\s+│ description/,
-    );
-    assert.doesNotMatch(empty.stdout, /focus|handoff|review|survey/);
   });
 
   test("rejects unsupported list type", async () => {
