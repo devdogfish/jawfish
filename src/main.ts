@@ -11,12 +11,11 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import {
   basename,
   dirname,
   extname,
-  isAbsolute,
   join,
   relative,
   resolve,
@@ -40,7 +39,6 @@ import {
   removeMaterialized,
   resolveInside,
   writeManifest,
-  type Manifest,
   type ManifestEntry,
 } from "./install.ts";
 import { runCommand } from "./process.ts";
@@ -72,8 +70,19 @@ import {
   formatRootHelp,
   parseCommand,
   type CommandArgs,
-  type InstalledFilter,
 } from "./command-grammar.ts";
+import { queryListCatalog } from "./list-query.ts";
+import { formatListRawJson, formatListTable } from "./list-format.ts";
+import {
+  bulkUpdateResult,
+  formatUpdateDiagnostics,
+  formatUpdateResult,
+  updateFailure,
+  updateResultExitCode,
+  updatedPackageResult,
+  type BulkUpdateSummary,
+  type UpdateResult,
+} from "./update-result.ts";
 
 const version = "0.1.4";
 
@@ -118,18 +127,6 @@ interface RepoSkillSelection {
 interface RepoSkillImportResult {
   selected: RepoSkillSelection[];
   unselectedSiblingCount: number;
-}
-
-interface BulkUpdateFailure {
-  details: string;
-  message: string;
-  name: string;
-}
-
-interface BulkUpdateSummary {
-  failed: BulkUpdateFailure[];
-  skipped: string[];
-  updated: string[];
 }
 
 interface ImportPackageResult {
@@ -296,9 +293,6 @@ async function installCommand(args: CommandArgs): Promise<number> {
 }
 
 async function listCommand(args: CommandArgs): Promise<number> {
-  const type = args.type;
-  const installed = args.installed;
-
   const config = await loadConfig({ promptForMissingDefaultTool: false });
   const session = await openAgenticsRepoSession(config);
   await session.sync();
@@ -307,24 +301,22 @@ async function listCommand(args: CommandArgs): Promise<number> {
     readManifest("project"),
     readManifest("global"),
   ]);
-  const entries = catalogEntriesForList(
-    session.dir,
+
+  const result = queryListCatalog({
+    agenticsRepoDir: session.dir,
     catalog,
-    type,
-    projectManifest,
     globalManifest,
-  ).filter(
-    (entry) =>
-      installed === undefined ||
-      matchesInstalledFilter(entry.installed, installed),
-  );
+    installed: args.installed,
+    projectManifest,
+    type: args.type,
+  });
 
   if (args.raw) {
-    console.log(JSON.stringify(entries, null, 2));
+    console.log(formatListRawJson(result));
     return 0;
   }
 
-  console.log(formatCatalogTable(entries));
+  console.log(formatListTable(result));
   return 0;
 }
 
@@ -440,7 +432,7 @@ async function updateCommand(args: CommandArgs): Promise<number> {
       name,
       reinstallScope,
     );
-    console.log(`Updated ${name}`);
+    printUpdateResult(updatedPackageResult(name));
     return 0;
   }
 
@@ -450,11 +442,12 @@ async function updateCommand(args: CommandArgs): Promise<number> {
     args.force,
     reinstallScope,
   );
+  const result = bulkUpdateResult(summary);
 
   if (summary.failed.length === 0 && summary.updated.length > 0) {
     await session.writeCatalog(catalog);
     if (!(await session.pushChanges("update jawfish"))) {
-      printBulkUpdateSummary(summary);
+      printUpdateResult(result);
       return 1;
     }
 
@@ -470,8 +463,8 @@ async function updateCommand(args: CommandArgs): Promise<number> {
     );
   }
 
-  printBulkUpdateSummary(summary);
-  return summary.failed.length > 0 ? 1 : 0;
+  printUpdateResult(result);
+  return updateResultExitCode(result);
 }
 
 async function installOne(
@@ -1467,46 +1460,19 @@ async function updateAllPackages(
       );
       summary.updated.push(name);
     } catch (error) {
-      const failure = bulkUpdateFailure(name, error);
-      summary.failed.push(failure);
-      console.error(`Failed to update ${name}:\n${failure.details}`);
+      summary.failed.push(updateFailure(name, error));
     }
   }
 
   return summary;
 }
 
-function printBulkUpdateSummary(summary: BulkUpdateSummary): void {
-  console.log(`Updated: ${formatSummaryNames(summary.updated)}`);
-  console.log(`Skipped: ${formatSummaryNames(summary.skipped)}`);
-  console.log(`Failed: ${formatBulkUpdateFailures(summary.failed)}`);
-}
-
-function formatSummaryNames(names: string[]): string {
-  return names.length === 0 ? "none" : names.join(", ");
-}
-
-function formatBulkUpdateFailures(failures: BulkUpdateFailure[]): string {
-  if (failures.length === 0) {
-    return "none";
+function printUpdateResult(result: UpdateResult): void {
+  const diagnostics = formatUpdateDiagnostics(result);
+  if (diagnostics !== "") {
+    console.error(diagnostics);
   }
-
-  return failures
-    .map((failure) => `${failure.name} (${failure.message})`)
-    .join(", ");
-}
-
-function bulkUpdateFailure(name: string, error: unknown): BulkUpdateFailure {
-  const details = stringifyError(error);
-  return {
-    details,
-    message: details.split("\n")[0],
-    name,
-  };
-}
-
-function stringifyError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  console.log(formatUpdateResult(result));
 }
 
 async function reinstallInScopeIfPresent(
@@ -1568,132 +1534,6 @@ function printCatalogEntry(
   if (entry.upstream !== undefined) {
     console.log(`upstream: ${entry.upstream}`);
   }
-}
-
-interface ListCatalogEntry {
-  description: string;
-  installed: InstalledStatus;
-  name: string;
-  path: string;
-  type: AgenticType;
-}
-
-type InstalledStatus = "project" | "global" | "both" | "-";
-
-function catalogEntriesForList(
-  agenticsRepoDir: string,
-  catalog: Catalog,
-  type: AgenticType | undefined,
-  projectManifest: Manifest,
-  globalManifest: Manifest,
-): ListCatalogEntry[] {
-  return Object.entries(catalog.jawfish)
-    .filter(([, entry]) => type === undefined || entry.type === type)
-    .map(([name, entry]) => ({
-      description: entry.description,
-      installed: installedStatus(name, projectManifest, globalManifest),
-      name,
-      path: compactHomePath(resolveInside(agenticsRepoDir, entry.path)),
-      type: entry.type,
-    }))
-    .sort((left, right) => left.name.localeCompare(right.name));
-}
-
-function installedStatus(
-  name: string,
-  projectManifest: Manifest,
-  globalManifest: Manifest,
-): InstalledStatus {
-  const project = projectManifest.jawfish[name] !== undefined;
-  const global = globalManifest.jawfish[name] !== undefined;
-
-  if (project && global) {
-    return "both";
-  }
-
-  if (project) {
-    return "project";
-  }
-
-  if (global) {
-    return "global";
-  }
-
-  return "-";
-}
-
-function matchesInstalledFilter(
-  status: InstalledStatus,
-  filter: InstalledFilter,
-): boolean {
-  switch (filter) {
-    case "project":
-      return status === "project" || status === "both";
-    case "global":
-      return status === "global" || status === "both";
-    case "both":
-      return status === "both";
-    case "none":
-      return status === "-";
-    case "any":
-      return status !== "-";
-  }
-}
-
-function compactHomePath(path: string): string {
-  const home = resolve(homedir());
-  const resolved = resolve(path);
-  const pathRelativeToHome = relative(home, resolved);
-
-  if (pathRelativeToHome === "") {
-    return "~";
-  }
-
-  if (
-    !pathRelativeToHome.startsWith("..") &&
-    !isAbsolute(pathRelativeToHome)
-  ) {
-    return join("~", pathRelativeToHome);
-  }
-
-  return resolved;
-}
-
-function formatCatalogTable(entries: ListCatalogEntry[]): string {
-  const columns = ["name", "type", "installed", "description"] as const;
-  const widths = columns.map((column) =>
-    Math.max(
-      column.length,
-      ...entries.map((entry) => String(entry[column]).length),
-    ),
-  );
-  const top = tableBorder("┌", "┬", "┐", widths);
-  const middle = tableBorder("├", "┼", "┤", widths);
-  const bottom = tableBorder("└", "┴", "┘", widths);
-  const header = tableRow([...columns], widths);
-  const rows = entries.map((entry) =>
-    tableRow(
-      [entry.name, entry.type, entry.installed, entry.description],
-      widths,
-    ),
-  );
-
-  return [top, header, middle, ...rows, bottom].join("\n");
-}
-
-function tableBorder(
-  left: string,
-  joiner: string,
-  right: string,
-  widths: number[],
-): string {
-  return `${left}${widths.map((width) => "─".repeat(width + 2)).join(joiner)}${right}`;
-}
-
-function tableRow(values: string[], widths: number[]): string {
-  return `│ ${values
-    .map((value, index) => value.padEnd(widths[index]))
-    .join(" │ ")} │`;
 }
 
 async function inferType(
