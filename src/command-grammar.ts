@@ -7,8 +7,8 @@ interface CommandSpec {
   help: readonly string[];
   options: readonly CommandOptionName[];
   positionals: {
-    max: number;
     min: number;
+    max: number;
   };
   summary: string;
   usage: string;
@@ -50,31 +50,61 @@ export type CommandRequest =
 const optionSpecs = {
   force: {
     flags: ["-F", "--force"],
+    takesValue: false,
   },
   global: {
     flags: ["-g", "--global"],
+    takesValue: false,
   },
   help: {
     flags: ["-h", "--help"],
+    takesValue: false,
   },
   installed: {
     flags: ["--installed"],
+    takesValue: true,
   },
   name: {
     flags: ["--name"],
+    takesValue: true,
   },
   raw: {
     flags: ["--raw"],
+    takesValue: false,
   },
   type: {
     flags: ["--type"],
+    takesValue: true,
   },
   yes: {
     flags: ["-y", "--yes"],
+    takesValue: false,
   },
 } as const;
 
 type CommandOptionName = keyof typeof optionSpecs;
+type ValueOptionName = {
+  [Option in CommandOptionName]: (typeof optionSpecs)[Option] extends {
+    takesValue: true;
+  }
+    ? Option
+    : never;
+}[CommandOptionName];
+type BooleanOptionName = Exclude<CommandOptionName, ValueOptionName>;
+
+type ParsedCommandArgs = Omit<CommandArgs, "installed" | "type"> & {
+  installed?: string;
+  type?: string;
+};
+
+const installHelp = [
+  "-g, --global    Install global manifest",
+  "-y, --yes       For repo roots, select all non-conflicting skills",
+  "--name <name>   Override imported package name",
+  "-h, --help      Show help",
+] as const;
+
+const installOptions = ["global", "yes", "name", "help"] as const;
 
 const commandSpecs = {
   add: {
@@ -108,30 +138,20 @@ const commandSpecs = {
     description:
       "Install an agentic when a name/source is provided, otherwise materialize manifest jawfish.",
     handler: installHandler,
-    help: [
-      "-g, --global    Install global manifest",
-      "-y, --yes       For repo roots, select all non-conflicting skills",
-      "--name <name>   Override imported package name",
-      "-h, --help      Show help",
-    ],
+    help: installHelp,
     summary: "Install an agentic or manifest",
     usage: "jawfish install [options] [name|source]",
-    options: ["global", "yes", "name", "help"],
+    options: installOptions,
     positionals: { min: 0, max: 1 },
   },
   i: {
     description:
       "Alias for install: add a name/source, or materialize the manifest with no name/source.",
     handler: installHandler,
-    help: [
-      "-g, --global    Install global manifest",
-      "-y, --yes       For repo roots, select all non-conflicting skills",
-      "--name <name>   Override imported package name",
-      "-h, --help      Show help",
-    ],
+    help: installHelp,
     summary: "Alias for install",
     usage: "jawfish i [options] [name|source]",
-    options: ["global", "yes", "name", "help"],
+    options: installOptions,
     positionals: { min: 0, max: 1 },
   },
   "import-skills": {
@@ -208,6 +228,7 @@ export const installedFilters = [
 export type InstalledFilter = (typeof installedFilters)[number];
 
 const commandNames = Object.keys(commandSpecs) as CommandName[];
+const installedFilterSet = new Set<string>(installedFilters);
 const optionByFlag = buildOptionByFlag();
 
 export function parseCommand(argv: string[]): CommandRequest {
@@ -230,11 +251,11 @@ export function parseCommand(argv: string[]): CommandRequest {
     return { kind: "command-help", command };
   }
 
-  validateCommandArgs(command, parsed);
+  const commandArgs = validateCommandArgs(command, parsed);
   return {
-    args: parsed,
+    args: commandArgs,
     command,
-    handler: commandHandler(command, parsed),
+    handler: commandHandler(command, commandArgs),
     kind: "dispatch",
   };
 }
@@ -272,10 +293,13 @@ ${spec.help.map((option) => `  ${option}`).join("\n")}`;
 }
 
 export function isInstalledFilter(value: string): value is InstalledFilter {
-  return installedFilters.includes(value as InstalledFilter);
+  return installedFilterSet.has(value);
 }
 
-function parseCommandArgs(args: string[], command: CommandName): CommandArgs {
+function parseCommandArgs(
+  args: string[],
+  command: CommandName,
+): ParsedCommandArgs {
   const parsed = defaultCommandArgs();
 
   for (let index = 0; index < args.length; index += 1) {
@@ -284,7 +308,7 @@ function parseCommandArgs(args: string[], command: CommandName): CommandArgs {
     if (option !== undefined) {
       assertAllowedOption(command, option, arg);
 
-      if (optionTakesValue(option)) {
+      if (isValueOption(option)) {
         const value = args[index + 1];
         if (value === undefined) {
           throw new Error(missingOptionValueMessage(command, arg));
@@ -309,7 +333,7 @@ function parseCommandArgs(args: string[], command: CommandName): CommandArgs {
   return parsed;
 }
 
-function defaultCommandArgs(): CommandArgs {
+function defaultCommandArgs(): ParsedCommandArgs {
   return {
     force: false,
     global: false,
@@ -320,23 +344,67 @@ function defaultCommandArgs(): CommandArgs {
   };
 }
 
-function validateCommandArgs(command: CommandName, args: CommandArgs): void {
+function validateCommandArgs(
+  command: CommandName,
+  args: ParsedCommandArgs,
+): CommandArgs {
   const { max, min } = commandSpecs[command].positionals;
   if (args.positionals.length < min || args.positionals.length > max) {
     throw new Error(usageLine(command));
   }
 
-  if (args.type !== undefined && !isAgenticType(args.type)) {
-    throw new Error(
-      `Unsupported type: ${args.type}. Supported types: ${agenticTypes.join(", ")}`,
-    );
+  let type: AgenticType | undefined;
+  if (args.type !== undefined) {
+    if (!isAgenticType(args.type)) {
+      throw new Error(
+        `Unsupported type: ${args.type}. Supported types: ${agenticTypes.join(", ")}`,
+      );
+    }
+
+    type = args.type;
   }
 
-  if (args.installed !== undefined && !isInstalledFilter(args.installed)) {
-    throw new Error(
-      `Unsupported installed filter: ${args.installed}. Supported filters: ${installedFilters.join(", ")}`,
-    );
+  let installed: InstalledFilter | undefined;
+  if (args.installed !== undefined) {
+    if (!isInstalledFilter(args.installed)) {
+      throw new Error(
+        `Unsupported installed filter: ${args.installed}. Supported filters: ${installedFilters.join(", ")}`,
+      );
+    }
+
+    installed = args.installed;
   }
+
+  return toCommandArgs(args, type, installed);
+}
+
+function toCommandArgs(
+  args: ParsedCommandArgs,
+  type: AgenticType | undefined,
+  installed: InstalledFilter | undefined,
+): CommandArgs {
+  const commandArgs: CommandArgs = {
+    force: args.force,
+    global: args.global,
+    help: args.help,
+    positionals: args.positionals,
+    raw: args.raw,
+    yes: args.yes,
+  };
+
+  if (args.name !== undefined) {
+    commandArgs.name = args.name;
+  }
+
+  if (type !== undefined) {
+    commandArgs.type = type;
+  }
+
+  if (installed !== undefined) {
+    commandArgs.installed = installed;
+  }
+
+  return commandArgs;
 }
 
 function assertAllowedOption(
@@ -344,7 +412,7 @@ function assertAllowedOption(
   option: CommandOptionName,
   flag: string,
 ): void {
-  const options = commandSpecs[command].options as readonly CommandOptionName[];
+  const options: readonly CommandOptionName[] = commandSpecs[command].options;
   if (!options.includes(option)) {
     throw new Error(optionErrorMessage(command, "Unsupported option", flag));
   }
@@ -362,7 +430,10 @@ function installHandler(args: CommandArgs): CommandHandler {
   return args.positionals.length > 0 ? "add" : "install";
 }
 
-function setBooleanOption(args: CommandArgs, option: CommandOptionName): void {
+function setBooleanOption(
+  args: ParsedCommandArgs,
+  option: BooleanOptionName,
+): void {
   switch (option) {
     case "force":
       args.force = true;
@@ -379,39 +450,29 @@ function setBooleanOption(args: CommandArgs, option: CommandOptionName): void {
     case "yes":
       args.yes = true;
       return;
-    case "installed":
-    case "name":
-    case "type":
-      throw new Error(`Internal option error: ${option} requires a value`);
   }
 }
 
 function setValueOption(
-  args: CommandArgs,
-  option: CommandOptionName,
+  args: ParsedCommandArgs,
+  option: ValueOptionName,
   value: string,
 ): void {
   switch (option) {
     case "installed":
-      args.installed = value as InstalledFilter;
+      args.installed = value;
       return;
     case "name":
       args.name = value;
       return;
     case "type":
-      args.type = value as AgenticType;
+      args.type = value;
       return;
-    case "force":
-    case "global":
-    case "help":
-    case "raw":
-    case "yes":
-      throw new Error(`Internal option error: ${option} does not take a value`);
   }
 }
 
-function optionTakesValue(option: CommandOptionName): boolean {
-  return option === "installed" || option === "name" || option === "type";
+function isValueOption(option: CommandOptionName): option is ValueOptionName {
+  return optionSpecs[option].takesValue;
 }
 
 function missingOptionValueMessage(
