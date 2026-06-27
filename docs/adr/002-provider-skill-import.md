@@ -38,6 +38,16 @@ MVP choices:
 - Support `-y`/`--yes` to import without prompting.
 - On catalog name conflicts, skip by default and show the existing catalog
   entry. Rename/overwrite can be added later.
+- On duplicate discovered names across scanned providers/scopes, mark each
+  duplicate as a conflict because the catalog is keyed by agentic name.
+
+Scope clarification:
+
+- The top-level `jawfish import-skills <provider>` command scans global provider
+  directories only.
+- Interactive `jawfish init` can discover both global and current-project source
+  provider skills because init is already setting up machine and project state;
+  selected imports are recorded into the matching manifest scope.
 
 ## Expected Flow
 

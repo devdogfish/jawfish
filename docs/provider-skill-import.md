@@ -10,7 +10,7 @@ jawfish import-skills <provider> -y
 jawfish import-skills <provider> --yes
 ```
 
-Scope:
+Command scope:
 
 - Source: global provider skill dirs only.
 - Providers: all supported tools.
@@ -20,6 +20,13 @@ Scope:
 - Target: agentics repo plus global `jawfish.json`.
 - Adoption: imported global files become Jawfish-managed.
 - Conflicts: skip existing catalog names and report them.
+
+Init scope:
+
+- Interactive `jawfish init` can discover global and current-project provider
+  skills.
+- Duplicate discovered names are conflicts because the catalog is keyed by
+  agentic name.
 
 ## Rationale
 
@@ -33,7 +40,7 @@ personal, stale, or experimental skills. Bulk writes should be explicit, and
 
 ## Future Work
 
-- Project provider dirs.
+- Project provider dirs for `jawfish import-skills <provider>`.
 - Agents and prompts.
 - Rename or overwrite conflict modes.
 - `--from` and `--to` rematerialization between providers.

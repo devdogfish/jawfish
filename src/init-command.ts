@@ -32,8 +32,7 @@ import {
   type Manifest,
 } from "./install.ts";
 import {
-  applySelectedSkillImports,
-  discoverImportableSkills,
+  createMigrationImportTransaction,
   importProviderSkillsToSession,
   type ImportableSkillCandidate,
 } from "./provider-skill-import.ts";
@@ -507,15 +506,15 @@ async function importSelectedSkills(
   context: InitContext,
 ): Promise<void> {
   const options = pathOptions(context);
-  const catalog = await session.readCatalog();
-  const discovery = await discoverImportableSkills(
+  const transaction = await createMigrationImportTransaction(
+    session,
     defaultSupportedTools,
     ["global", "project"],
-    catalog,
     options,
   );
+  const preview = transaction.preview;
 
-  if (discovery.candidates.length === 0) {
+  if (preview.candidates.length === 0) {
     console.log("No importable skills found");
     return;
   }
@@ -526,30 +525,18 @@ async function importSelectedSkills(
   }
 
   const selectedIds = await context.prompts.selectImportSkills(
-    discovery.candidates,
+    preview.candidates,
   );
-  const candidatesById = new Map(
-    discovery.candidates.map((candidate) => [candidate.id, candidate]),
-  );
-  const selected = selectedIds.map((id) => {
-    const candidate = candidatesById.get(id);
-    if (candidate === undefined) {
-      throw new Error(`Selected import skill is not available: ${id}`);
-    }
-    return candidate;
-  });
-
-  if (selected.length === 0) {
+  if (selectedIds.length === 0) {
     console.log("No skills selected for import");
     return;
   }
 
-  await applySelectedSkillImports(session.dir, catalog, selected, options);
-  await session.writeCatalog(catalog);
-  if (!(await session.pushChanges("import skills"))) {
+  const result = await transaction.applySelected(selectedIds, "import skills");
+  if (!result.pushed) {
     throw new Error("Import failed");
   }
-  console.log(`Imported ${selected.length} skills`);
+  console.log(`Imported ${result.imported.length} skills`);
 }
 
 async function importSelectedProviders(

@@ -41,6 +41,8 @@ export interface ImportableSkillCandidate extends DiscoveredSkill {
 export interface ImportableSkillDiscovery {
   candidates: ImportableSkillCandidate[];
   conflicts: ImportSkillsSkip[];
+  providers: string[];
+  scopes: InstallScope[];
   skipped: ImportSkillsSkip[];
 }
 
@@ -52,7 +54,22 @@ export interface ImportSkillsPlan {
 
 export interface ImportSkillsSkip {
   name: string;
+  provider?: string;
   reason: string;
+  scope?: InstallScope;
+}
+
+export interface MigrationImportApplyResult {
+  imported: ImportableSkillCandidate[];
+  pushed: boolean;
+}
+
+export interface MigrationImportTransaction {
+  applySelected: (
+    selectedIds: readonly string[],
+    message: string,
+  ) => Promise<MigrationImportApplyResult>;
+  preview: ImportableSkillDiscovery;
 }
 
 interface ProviderSkillImportTarget {
@@ -60,6 +77,9 @@ interface ProviderSkillImportTarget {
   pushChanges: (message: string) => Promise<boolean>;
   writeCatalog: (catalog: Catalog) => Promise<void>;
 }
+
+const catalogConflictReason = "catalog conflict";
+const duplicateDiscoveredSkillReason = "duplicate discovered skill name";
 
 export async function planSkillImport(
   sourceRoot: string,
@@ -113,6 +133,8 @@ export async function discoverImportableSkills(
   const discovery: ImportableSkillDiscovery = {
     candidates: [],
     conflicts: [],
+    providers: [...providers],
+    scopes: [...scopes],
     skipped: [],
   };
 
@@ -120,37 +142,26 @@ export async function discoverImportableSkills(
     for (const scope of scopes) {
       const sourceRoot = skillRoot(provider, scope, options);
       const plan = await planSkillImport(sourceRoot, catalog);
-      discovery.candidates.push(
-        ...plan.imported.map((skill) => ({
-          ...skill,
-          id: importableSkillId(provider, scope, skill.name),
-          provider,
-          scope,
-        })),
-      );
-      discovery.conflicts.push(
-        ...plan.conflicts.map((name) => ({
-          name: `${provider}/${scope}/${name}`,
-          reason: "catalog conflict",
-        })),
-      );
-      discovery.skipped.push(
-        ...plan.skipped.map((skip) => ({
-          name: `${provider}/${scope}/${skip.name}`,
-          reason: skip.reason,
-        })),
-      );
+      addScopedImportPlan(discovery, provider, scope, plan);
     }
   }
 
-  discovery.candidates.sort((left, right) =>
-    left.provider.localeCompare(right.provider) ||
-    left.scope.localeCompare(right.scope) ||
-    left.name.localeCompare(right.name),
-  );
-  discovery.conflicts.sort((left, right) => left.name.localeCompare(right.name));
-  discovery.skipped.sort((left, right) => left.name.localeCompare(right.name));
+  markDuplicateImportNamesAsConflicts(discovery);
+  sortImportableSkillDiscovery(discovery);
   return discovery;
+}
+
+export function previewImportSkillsPlan(
+  discovery: ImportableSkillDiscovery,
+): ImportSkillsPlan {
+  return {
+    conflicts: discovery.conflicts.map((conflict) => conflict.name),
+    imported: discovery.candidates,
+    skipped: discovery.skipped.map((skip) => ({
+      name: skip.name,
+      reason: skip.reason,
+    })),
+  };
 }
 
 export function printImportSkillsPlan(
@@ -171,7 +182,7 @@ export async function applySkillImport(
   agenticsRepoDir: string,
   catalog: Catalog,
   provider: string,
-  skills: DiscoveredSkill[],
+  skills: readonly DiscoveredSkill[],
   options: PathOptions = {},
   manifestScope: InstallScope = "global",
 ): Promise<void> {
@@ -208,7 +219,7 @@ export async function applySkillImport(
 export async function applySelectedSkillImports(
   agenticsRepoDir: string,
   catalog: Catalog,
-  skills: ImportableSkillCandidate[],
+  skills: readonly ImportableSkillCandidate[],
   options: PathOptions = {},
 ): Promise<void> {
   assertUniqueImportNames(skills);
@@ -225,13 +236,29 @@ export async function applySelectedSkillImports(
   }
 }
 
+export async function createMigrationImportTransaction(
+  session: AgenticsRepoSession,
+  providers: readonly string[],
+  scopes: readonly InstallScope[],
+  options: PathOptions = {},
+): Promise<MigrationImportTransaction> {
+  const catalog = await session.readCatalog();
+  return await createMigrationImportTransactionForTarget(
+    session,
+    catalog,
+    providers,
+    scopes,
+    options,
+  );
+}
+
 export async function importProviderSkills(
   agenticsRepoDir: string,
   catalog: Catalog,
   provider: string,
   options: PathOptions = {},
 ): Promise<number> {
-  return await importProviderSkillsToTarget(
+  const transaction = await createMigrationImportTransactionForTarget(
     {
       dir: agenticsRepoDir,
       pushChanges: (message) =>
@@ -239,7 +266,13 @@ export async function importProviderSkills(
       writeCatalog: (catalog) => writeCatalog(agenticsRepoDir, catalog),
     },
     catalog,
+    [provider],
+    ["global"],
+    options,
+  );
+  return await importProviderSkillsWithTransaction(
     provider,
+    transaction,
     options,
   );
 }
@@ -249,18 +282,73 @@ export async function importProviderSkillsToSession(
   provider: string,
   options: PathOptions = {},
 ): Promise<number> {
-  const catalog = await session.readCatalog();
-  return await importProviderSkillsToTarget(session, catalog, provider, options);
+  const transaction = await createMigrationImportTransaction(
+    session,
+    [provider],
+    ["global"],
+    options,
+  );
+  return await importProviderSkillsWithTransaction(
+    provider,
+    transaction,
+    options,
+  );
 }
 
-async function importProviderSkillsToTarget(
+async function createMigrationImportTransactionForTarget(
   target: ProviderSkillImportTarget,
   catalog: Catalog,
+  providers: readonly string[],
+  scopes: readonly InstallScope[],
+  options: PathOptions,
+): Promise<MigrationImportTransaction> {
+  const preview = await discoverImportableSkills(
+    providers,
+    scopes,
+    catalog,
+    options,
+  );
+
+  return {
+    applySelected: (selectedIds, message) =>
+      applyMigrationImportSelection(
+        target,
+        catalog,
+        preview,
+        selectedIds,
+        message,
+        options,
+      ),
+    preview,
+  };
+}
+
+async function applyMigrationImportSelection(
+  target: ProviderSkillImportTarget,
+  catalog: Catalog,
+  preview: ImportableSkillDiscovery,
+  selectedIds: readonly string[],
+  message: string,
+  options: PathOptions,
+): Promise<MigrationImportApplyResult> {
+  const selected = selectedImportCandidates(preview, selectedIds);
+  if (selected.length === 0) {
+    return { imported: [], pushed: true };
+  }
+
+  await applySelectedSkillImports(target.dir, catalog, selected, options);
+  await target.writeCatalog(catalog);
+  const pushed = await target.pushChanges(message);
+  return { imported: selected, pushed };
+}
+
+async function importProviderSkillsWithTransaction(
   provider: string,
+  transaction: MigrationImportTransaction,
   options: PathOptions,
 ): Promise<number> {
   const sourceRoot = globalSkillRoot(provider, options);
-  const plan = await planSkillImport(sourceRoot, catalog);
+  const plan = previewImportSkillsPlan(transaction.preview);
 
   printImportSkillsPlan(provider, sourceRoot, plan);
 
@@ -269,13 +357,15 @@ async function importProviderSkillsToTarget(
     return 0;
   }
 
-  await applySkillImport(target.dir, catalog, provider, plan.imported, options);
-  await target.writeCatalog(catalog);
-  if (!(await target.pushChanges(`import skills from ${provider}`))) {
+  const result = await transaction.applySelected(
+    transaction.preview.candidates.map((skill) => skill.id),
+    `import skills from ${provider}`,
+  );
+  if (!result.pushed) {
     return 1;
   }
 
-  console.log(`Imported ${plan.imported.length} skills from ${provider}`);
+  console.log(`Imported ${result.imported.length} skills from ${provider}`);
   return 0;
 }
 
@@ -306,22 +396,140 @@ function skillRoot(
   scope: InstallScope,
   options: PathOptions = {},
 ): string {
-  return sourceProviderSkillRoot(tool, scope, toolPaths(options.env, options.cwd));
+  return sourceProviderSkillRoot(
+    tool,
+    scope,
+    toolPaths(options.env, options.cwd),
+  );
 }
 
-function assertUniqueImportNames(skills: ImportableSkillCandidate[]): void {
-  const counts = new Map<string, number>();
-  for (const skill of skills) {
-    counts.set(skill.name, (counts.get(skill.name) ?? 0) + 1);
+function addScopedImportPlan(
+  discovery: ImportableSkillDiscovery,
+  provider: string,
+  scope: InstallScope,
+  plan: ImportSkillsPlan,
+): void {
+  discovery.candidates.push(
+    ...plan.imported.map((skill) => ({
+      ...skill,
+      id: importableSkillId(provider, scope, skill.name),
+      provider,
+      scope,
+    })),
+  );
+  discovery.conflicts.push(
+    ...plan.conflicts.map((name) => ({
+      name,
+      provider,
+      reason: catalogConflictReason,
+      scope,
+    })),
+  );
+  discovery.skipped.push(
+    ...plan.skipped.map((skip) => ({
+      name: skip.name,
+      provider,
+      reason: skip.reason,
+      scope,
+    })),
+  );
+}
+
+function markDuplicateImportNamesAsConflicts(
+  discovery: ImportableSkillDiscovery,
+): void {
+  const duplicateNames = duplicateImportCandidateNames(discovery.candidates);
+  if (duplicateNames.size === 0) {
+    return;
   }
 
-  const duplicates = [...counts.entries()]
-    .filter(([, count]) => count > 1)
-    .map(([name]) => name)
-    .sort();
+  discovery.conflicts.push(
+    ...discovery.candidates
+      .filter((candidate) => duplicateNames.has(candidate.name))
+      .map((candidate) => ({
+        name: candidate.name,
+        provider: candidate.provider,
+        reason: duplicateDiscoveredSkillReason,
+        scope: candidate.scope,
+      })),
+  );
+  discovery.candidates = discovery.candidates.filter(
+    (candidate) => !duplicateNames.has(candidate.name),
+  );
+}
+
+function sortImportableSkillDiscovery(
+  discovery: ImportableSkillDiscovery,
+): void {
+  discovery.candidates.sort(compareImportableSkillCandidates);
+  discovery.conflicts.sort(compareImportSkips);
+  discovery.skipped.sort(compareImportSkips);
+}
+
+function assertUniqueImportNames(
+  skills: readonly ImportableSkillCandidate[],
+): void {
+  const duplicates = [...duplicateImportCandidateNames(skills)].sort();
   if (duplicates.length > 0) {
-    throw new Error(`Selected import skills contain duplicate names: ${duplicates.join(", ")}`);
+    throw new Error(
+      `Selected import skills contain duplicate names: ${duplicates.join(", ")}`,
+    );
   }
+}
+
+function duplicateImportCandidateNames(
+  candidates: readonly ImportableSkillCandidate[],
+): Set<string> {
+  const counts = new Map<string, number>();
+  for (const candidate of candidates) {
+    counts.set(candidate.name, (counts.get(candidate.name) ?? 0) + 1);
+  }
+
+  return new Set(
+    [...counts.entries()]
+      .filter(([, count]) => count > 1)
+      .map(([name]) => name),
+  );
+}
+
+function selectedImportCandidates(
+  preview: ImportableSkillDiscovery,
+  selectedIds: readonly string[],
+): ImportableSkillCandidate[] {
+  const candidatesById = new Map(
+    preview.candidates.map((candidate) => [candidate.id, candidate]),
+  );
+
+  return selectedIds.map((id) => {
+    const candidate = candidatesById.get(id);
+    if (candidate === undefined) {
+      throw new Error(`Selected import skill is not available: ${id}`);
+    }
+
+    return candidate;
+  });
+}
+
+function compareImportableSkillCandidates(
+  left: ImportableSkillCandidate,
+  right: ImportableSkillCandidate,
+): number {
+  return (
+    left.provider.localeCompare(right.provider) ||
+    left.scope.localeCompare(right.scope) ||
+    left.name.localeCompare(right.name)
+  );
+}
+
+function compareImportSkips(
+  left: ImportSkillsSkip,
+  right: ImportSkillsSkip,
+): number {
+  return (
+    (left.provider ?? "").localeCompare(right.provider ?? "") ||
+    (left.scope ?? "").localeCompare(right.scope ?? "") ||
+    left.name.localeCompare(right.name)
+  );
 }
 
 function formatImportSkillSkips(skipped: ImportSkillsSkip[]): string {

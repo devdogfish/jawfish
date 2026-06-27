@@ -46,10 +46,10 @@ import {
   type InstallScope,
 } from "./tool-adapters.ts";
 import {
-  applySkillImport,
-  type DiscoveredSkill,
+  createMigrationImportTransaction,
   globalSkillRoot,
-  planSkillImport,
+  type ImportableSkillCandidate,
+  previewImportSkillsPlan,
   printImportSkillsPlan,
 } from "./provider-skill-import.ts";
 import {
@@ -295,9 +295,13 @@ async function importSkillsCommand(args: CommandArgs): Promise<number> {
 
   const config = await loadConfig({ promptForMissingDefaultTool: false });
   const session = await openAgenticsRepoSession(config);
-  const catalog = await session.readCatalog();
+  const transaction = await createMigrationImportTransaction(
+    session,
+    [provider],
+    ["global"],
+  );
   const sourceRoot = globalSkillRoot(provider);
-  const plan = await planSkillImport(sourceRoot, catalog);
+  const plan = previewImportSkillsPlan(transaction.preview);
 
   printImportSkillsPlan(provider, sourceRoot, plan);
 
@@ -306,22 +310,24 @@ async function importSkillsCommand(args: CommandArgs): Promise<number> {
     return 0;
   }
 
-  const selected = args.yes
-    ? plan.imported
-    : await selectProviderSkillsForImport(plan.imported);
+  const selectedIds = args.yes
+    ? transaction.preview.candidates.map((skill) => skill.id)
+    : await selectProviderSkillIdsForImport(transaction.preview.candidates);
 
-  if (selected.length === 0) {
+  if (selectedIds.length === 0) {
     console.log("No skills selected for import");
     return 0;
   }
 
-  await applySkillImport(session.dir, catalog, provider, selected);
-  await session.writeCatalog(catalog);
-  if (!(await session.pushChanges(`import skills from ${provider}`))) {
+  const result = await transaction.applySelected(
+    selectedIds,
+    `import skills from ${provider}`,
+  );
+  if (!result.pushed) {
     return 1;
   }
 
-  console.log(`Imported ${selected.length} skills from ${provider}`);
+  console.log(`Imported ${result.imported.length} skills from ${provider}`);
   return 0;
 }
 
@@ -654,15 +660,15 @@ function repoSkillSelectionSuffix(candidate: RepoSkillCandidate): string {
   return "";
 }
 
-async function selectProviderSkillsForImport(
-  skills: DiscoveredSkill[],
-): Promise<DiscoveredSkill[]> {
+async function selectProviderSkillIdsForImport(
+  skills: ImportableSkillCandidate[],
+): Promise<string[]> {
   const selected = await multiselect({
     message: "Import existing skills",
     options: skills.map((skill) => ({
       hint: skill.path,
       label: skill.name,
-      value: skill.name,
+      value: skill.id,
     })),
     required: false,
   });
@@ -672,8 +678,10 @@ async function selectProviderSkillsForImport(
     throw new Error("Import cancelled");
   }
 
-  const selectedNames = new Set(selected);
-  return skills.filter((skill) => selectedNames.has(skill.name));
+  const selectedIds = new Set(selected);
+  return skills
+    .filter((skill) => selectedIds.has(skill.id))
+    .map((skill) => skill.id);
 }
 
 async function updatePackageInAgenticsRepo(
