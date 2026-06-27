@@ -12,6 +12,8 @@ import {
 import {
   acquireSource,
   acquireRepoSource,
+  catalogNameForUpstream,
+  isSameUpstream,
   normalizeSourceUrl,
   planRepoSkillIntake,
 } from "../src/source-intake.ts";
@@ -52,6 +54,29 @@ test("source intake normalizes GitHub blob file URLs to raw URLs", () => {
     ),
     "https://raw.githubusercontent.com/mattpocock/skills/main/skills/productivity/handoff/SKILL.md",
   );
+});
+
+test("source intake matches raw GitHub skill files to repo skill upstreams", () => {
+  const raw =
+    "https://raw.githubusercontent.com/mattpocock/skills/main/skills/productivity/handoff/SKILL.md";
+  const blob =
+    "https://github.com/mattpocock/skills/blob/main/skills/productivity/handoff/SKILL.md";
+  const tree =
+    "https://github.com/mattpocock/skills/tree/main/skills/productivity/handoff";
+  const catalog: Catalog = {
+    jawfish: {
+      "renamed-handoff": {
+        description: "",
+        path: "skills/renamed-handoff",
+        type: "skill",
+        upstream: raw,
+      },
+    },
+  };
+
+  assert.equal(isSameUpstream(raw, tree), true);
+  assert.equal(isSameUpstream(blob, tree), true);
+  assert.equal(catalogNameForUpstream(catalog, tree), "renamed-handoff");
 });
 
 test("source intake models local repo skill candidates before writes", async () => {

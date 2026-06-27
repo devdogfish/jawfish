@@ -238,7 +238,7 @@ export function isSameUpstream(
   }
 
   if (isUrl(existing) && isUrl(source)) {
-    return normalizeSourceUrl(existing) === normalizeSourceUrl(source);
+    return normalizeUpstreamUrl(existing) === normalizeUpstreamUrl(source);
   }
 
   if (!isUrl(existing) && !isUrl(source)) {
@@ -246,6 +246,54 @@ export function isSameUpstream(
   }
 
   return existing === source;
+}
+
+function normalizeUpstreamUrl(source: string): string {
+  return githubSkillUpstreamIdentity(source) ?? normalizeSourceUrl(source);
+}
+
+function githubSkillUpstreamIdentity(source: string): string | undefined {
+  const url = new URL(source);
+  const raw = url.hostname === "raw.githubusercontent.com";
+  if (!raw && url.hostname !== "github.com") {
+    return undefined;
+  }
+
+  const parts = url.pathname.split("/").filter(Boolean);
+  const [owner, rawRepo] = parts;
+  const kind = raw ? "raw" : parts[2];
+  const ref = raw ? parts[2] : parts[3];
+  const pathParts = raw ? parts.slice(3) : parts.slice(4);
+  if (owner === undefined || rawRepo === undefined || ref === undefined) {
+    return undefined;
+  }
+
+  const path = normalizePath(pathParts.join("/"));
+  const relativePath = kind === "tree" ? path : skillFileParentPath(path);
+  if (
+    (kind !== "raw" && kind !== "blob" && kind !== "tree") ||
+    relativePath === undefined
+  ) {
+    return undefined;
+  }
+
+  return githubSkillIdentity(
+    owner,
+    rawRepo.replace(/\.git$/u, ""),
+    ref,
+    relativePath,
+  );
+}
+
+function githubSkillIdentity(
+  owner: string,
+  repo: string,
+  ref: string,
+  relativePath: string,
+): string {
+  const cleanRelativePath =
+    normalizePath(relativePath).replace(/\/$/u, "") || ".";
+  return `github-skill:${owner}/${repo}@${ref}:${cleanRelativePath}`;
 }
 
 export async function preparePackageUpdate(
