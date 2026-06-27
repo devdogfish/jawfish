@@ -14,25 +14,56 @@ import { createAgenticsRepoSession } from "../src/agentics-repo.ts";
 import { createBareRemote, createGitRepository, git } from "./helpers/cli.ts";
 import { createMigrationImportTransaction } from "../src/provider-skill-import.ts";
 
-test("migration import preview reports conflicts and skips before validating selections", async () => {
-  const rootDir = await mkdtemp(join(tmpdir(), "jawfish-import-preview-"));
+interface ProviderImportTestContext {
+  agenticsRepoDir: string;
+  codexHome: string;
+  homeDir: string;
+  options: {
+    cwd: string;
+    env: Record<string, string>;
+  };
+  rootDir: string;
+}
+
+async function withProviderImportContext(
+  run: (context: ProviderImportTestContext) => Promise<void>,
+): Promise<void> {
+  const rootDir = await mkdtemp(join(tmpdir(), "jawfish-import-"));
   try {
     const homeDir = join(rootDir, "home");
     const projectDir = join(rootDir, "project");
     const codexHome = join(rootDir, "codex-home");
-    const agenticsRepoDir = join(rootDir, "agentics");
-    const options = {
-      cwd: projectDir,
-      env: {
-        CODEX_HOME: codexHome,
-        HOME: homeDir,
-        JAWFISH_HOME: homeDir,
-        OPENCODE_CONFIG_DIR: join(homeDir, ".config", "opencode"),
-        XDG_CONFIG_HOME: join(homeDir, ".config"),
-      },
-    };
 
     await mkdir(projectDir, { recursive: true });
+    await run({
+      agenticsRepoDir: join(rootDir, "agentics"),
+      codexHome,
+      homeDir,
+      options: {
+        cwd: projectDir,
+        env: {
+          CODEX_HOME: codexHome,
+          HOME: homeDir,
+          JAWFISH_HOME: homeDir,
+          OPENCODE_CONFIG_DIR: join(homeDir, ".config", "opencode"),
+          XDG_CONFIG_HOME: join(homeDir, ".config"),
+        },
+      },
+      rootDir,
+    });
+  } finally {
+    await rm(rootDir, { force: true, recursive: true });
+  }
+}
+
+async function assertMissingFile(path: string): Promise<void> {
+  await assert.rejects(readFile(path, "utf8"), { code: "ENOENT" });
+}
+
+test("migration import preview reports conflicts and skips before validating selections", async () => {
+  await withProviderImportContext(async (context) => {
+    const { agenticsRepoDir, codexHome, homeDir, options } = context;
+
     await createGitRepository(agenticsRepoDir);
     await writeFile(
       join(agenticsRepoDir, "index.json"),
@@ -87,46 +118,22 @@ test("migration import preview reports conflicts and skips before validating sel
       transaction.applySelected(["codex:global:missing"], "import skills"),
       /Selected import skill is not available: codex:global:missing/,
     );
-    await assert.rejects(
-      readFile(join(agenticsRepoDir, "skills", "plan", "SKILL.md"), "utf8"),
-      { code: "ENOENT" },
+    await assertMissingFile(
+      join(agenticsRepoDir, "skills", "plan", "SKILL.md"),
     );
-    await assert.rejects(readFile(join(homeDir, "jawfish.json"), "utf8"), {
-      code: "ENOENT",
-    });
-    await assert.rejects(
-      readFile(
-        join(codexHome, "skills", "plan", ".jawfish-managed.json"),
-        "utf8",
-      ),
-      { code: "ENOENT" },
+    await assertMissingFile(join(homeDir, "jawfish.json"));
+    await assertMissingFile(
+      join(codexHome, "skills", "plan", ".jawfish-managed.json"),
     );
-  } finally {
-    await rm(rootDir, { force: true, recursive: true });
-  }
+  });
 });
 
 test("migration import transaction keeps local writes consistent when push fails", async () => {
-  const rootDir = await mkdtemp(join(tmpdir(), "jawfish-import-transaction-"));
-  try {
-    const homeDir = join(rootDir, "home");
-    const projectDir = join(rootDir, "project");
-    const codexHome = join(rootDir, "codex-home");
-    const agenticsRepoDir = join(rootDir, "agentics");
+  await withProviderImportContext(async (context) => {
+    const { agenticsRepoDir, codexHome, homeDir, options, rootDir } = context;
     const remoteDir = join(rootDir, "agentics.git");
     const sourceSkillDir = join(codexHome, "skills", "focus");
-    const options = {
-      cwd: projectDir,
-      env: {
-        CODEX_HOME: codexHome,
-        HOME: homeDir,
-        JAWFISH_HOME: homeDir,
-        OPENCODE_CONFIG_DIR: join(homeDir, ".config", "opencode"),
-        XDG_CONFIG_HOME: join(homeDir, ".config"),
-      },
-    };
 
-    await mkdir(projectDir, { recursive: true });
     await createGitRepository(agenticsRepoDir);
     await createBareRemote(remoteDir);
     await git(agenticsRepoDir, ["remote", "add", "origin", remoteDir]);
@@ -197,7 +204,5 @@ test("migration import transaction keeps local writes consistent when push fails
     const localHead = await git(agenticsRepoDir, ["rev-parse", "HEAD"]);
     const remoteHead = await git(remoteDir, ["rev-parse", "HEAD"]);
     assert.notEqual(localHead.stdout, remoteHead.stdout);
-  } finally {
-    await rm(rootDir, { force: true, recursive: true });
-  }
+  });
 });

@@ -342,17 +342,17 @@ async function importSkillsCommand(args: CommandArgs): Promise<number> {
     return 0;
   }
 
-  const selected = args.yes
-    ? transaction.preview.candidates
-    : await selectProviderSkillsForImport(transaction.preview.candidates);
+  const selectedIds = args.yes
+    ? transaction.preview.candidates.map((skill) => skill.id)
+    : await selectProviderSkillIdsForImport(transaction.preview.candidates);
 
-  if (selected.length === 0) {
+  if (selectedIds.length === 0) {
     console.log("No skills selected for import");
     return 0;
   }
 
   const result = await transaction.applySelected(
-    selected.map((skill) => skill.id),
+    selectedIds,
     `import skills from ${provider}`,
   );
   if (!result.pushed) {
@@ -912,15 +912,15 @@ function isSameUpstream(existing: string | undefined, source: string): boolean {
   return existing === source;
 }
 
-async function selectProviderSkillsForImport(
+async function selectProviderSkillIdsForImport(
   skills: ImportableSkillCandidate[],
-): Promise<ImportableSkillCandidate[]> {
+): Promise<string[]> {
   const selected = await multiselect({
     message: "Import existing skills",
     options: skills.map((skill) => ({
       hint: skill.path,
       label: skill.name,
-      value: skill.name,
+      value: skill.id,
     })),
     required: false,
   });
@@ -930,8 +930,10 @@ async function selectProviderSkillsForImport(
     throw new Error("Import cancelled");
   }
 
-  const selectedNames = new Set(selected);
-  return skills.filter((skill) => selectedNames.has(skill.name));
+  const selectedIds = new Set(selected);
+  return skills
+    .filter((skill) => selectedIds.has(skill.id))
+    .map((skill) => skill.id);
 }
 
 async function acquireSource(source: string): Promise<AcquiredSource> {

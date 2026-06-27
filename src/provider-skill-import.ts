@@ -177,12 +177,12 @@ export async function discoverImportableSkills(
 }
 
 export function previewImportSkillsPlan(
-  preview: ImportableSkillDiscovery,
+  discovery: ImportableSkillDiscovery,
 ): ImportSkillsPlan {
   return {
-    conflicts: preview.conflicts.map((conflict) => conflict.name),
-    imported: preview.candidates,
-    skipped: preview.skipped.map((skip) => ({
+    conflicts: discovery.conflicts.map((conflict) => conflict.name),
+    imported: discovery.candidates,
+    skipped: discovery.skipped.map((skip) => ({
       name: skip.name,
       reason: skip.reason,
     })),
@@ -295,7 +295,11 @@ export async function importProviderSkills(
     ["global"],
     options,
   );
-  return await importProviderSkillsWithTransaction(provider, transaction, options);
+  return await importProviderSkillsWithTransaction(
+    provider,
+    transaction,
+    options,
+  );
 }
 
 export async function importProviderSkillsToSession(
@@ -309,7 +313,11 @@ export async function importProviderSkillsToSession(
     ["global"],
     options,
   );
-  return await importProviderSkillsWithTransaction(provider, transaction, options);
+  return await importProviderSkillsWithTransaction(
+    provider,
+    transaction,
+    options,
+  );
 }
 
 async function createMigrationImportTransactionForTarget(
@@ -396,7 +404,11 @@ function skillRoot(
   scope: InstallScope,
   options: PathOptions = {},
 ): string {
-  return sourceProviderSkillRoot(tool, scope, toolPaths(options.env, options.cwd));
+  return sourceProviderSkillRoot(
+    tool,
+    scope,
+    toolPaths(options.env, options.cwd),
+  );
 }
 
 function assertUniqueImportNames(skills: ImportableSkillCandidate[]): void {
