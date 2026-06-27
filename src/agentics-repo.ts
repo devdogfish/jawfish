@@ -1,11 +1,22 @@
-import { readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import {
   agenticTypes,
   catalogEntryIssues,
+  readCatalog as readCatalogFile,
   readRawCatalog,
+  writeCatalog as writeCatalogFile,
+  type Catalog,
   type CatalogEntry,
 } from "./catalog.ts";
+import {
+  configPath,
+  deprecatedAgenticsRepoPath,
+  jawfishHome,
+  managedAgenticsRepoPath,
+  saveConfig as saveJawfishConfig,
+  type JawfishConfig,
+} from "./config.ts";
 import { errorHasCode } from "./errors.ts";
 import { exists } from "./files.ts";
 import { runCommand } from "./process.ts";
@@ -34,6 +45,191 @@ export interface InspectionIssue {
 
 type PushResult = { ok: true } | { ok: false; error: string };
 
+export interface AgenticsRepoSession {
+  dir: string;
+  inspect: () => Promise<AgenticsRepoInspection>;
+  pushChanges: (message: string) => Promise<boolean>;
+  readCatalog: () => Promise<Catalog>;
+  sync: () => Promise<void>;
+  writeCatalog: (catalog: Catalog) => Promise<void>;
+}
+
+export interface AgenticsRepoSessionOptions {
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+}
+
+export interface AgenticsRepoSelection {
+  createIfMissing: boolean;
+  localPath: string;
+  remoteSource?: string;
+}
+
+export async function openAgenticsRepoSession(
+  config: JawfishConfig,
+  options: AgenticsRepoSessionOptions = {},
+): Promise<AgenticsRepoSession> {
+  const dir = await resolveAgenticsRepoDir(config, options);
+  return createAgenticsRepoSession(dir);
+}
+
+export function createAgenticsRepoSession(
+  agenticsRepoDir: string,
+): AgenticsRepoSession {
+  return {
+    dir: agenticsRepoDir,
+    inspect: () => inspectAgenticsRepo(agenticsRepoDir),
+    pushChanges: (message) => pushAgenticsRepoChanges(agenticsRepoDir, message),
+    readCatalog: () => readCatalogFile(agenticsRepoDir),
+    sync: () => syncAgenticsRepo(agenticsRepoDir),
+    writeCatalog: (catalog) => writeCatalogFile(agenticsRepoDir, catalog),
+  };
+}
+
+export async function resolveAgenticsRepoDir(
+  config: JawfishConfig,
+  options: AgenticsRepoSessionOptions = {},
+): Promise<string> {
+  const cwd = options.cwd ?? process.cwd();
+  const env = options.env ?? process.env;
+
+  if (config.agenticsRepo === undefined || config.agenticsRepo === "") {
+    const agenticsRepoDir = managedAgenticsRepoPath(env);
+    await initializeLocalAgenticsRepo(agenticsRepoDir);
+    config.agenticsRepo = agenticsRepoDir;
+    await saveJawfishConfig(config, { env });
+    return agenticsRepoDir;
+  }
+
+  const configured = resolveConfiguredAgenticsRepoPath(config.agenticsRepo, cwd);
+  assertNotDeprecatedAgenticsRepoPath(configured, env);
+
+  if ((await exists(configured)) && !(await isBareAgenticsRepo(configured))) {
+    await prepareExistingAgenticsRepo(configured);
+    return configured;
+  }
+
+  const agenticsRepoDir = managedAgenticsRepoPath(env);
+  if (await exists(join(agenticsRepoDir, ".git"))) {
+    await prepareExistingAgenticsRepo(agenticsRepoDir);
+    return agenticsRepoDir;
+  }
+
+  await initializeRemoteAgenticsRepo(config.agenticsRepo, agenticsRepoDir);
+  return agenticsRepoDir;
+}
+
+export async function prepareAgenticsRepoSelection(
+  selection: AgenticsRepoSelection,
+  options: AgenticsRepoSessionOptions = {},
+): Promise<string> {
+  const cwd = options.cwd ?? process.cwd();
+  const localPath = resolveConfiguredAgenticsRepoPath(selection.localPath, cwd);
+
+  if (selection.remoteSource === undefined) {
+    const linkedPathExists = await exists(localPath);
+    if (!linkedPathExists && !selection.createIfMissing) {
+      throw new Error(`Agentics repo path not found: ${selection.localPath}`);
+    }
+
+    await initializeLocalAgenticsRepo(localPath);
+    return localPath;
+  }
+
+  await initializeRemoteAgenticsRepo(selection.remoteSource, localPath);
+  return localPath;
+}
+
+export async function syncAgenticsRepo(agenticsRepoDir: string): Promise<void> {
+  if (!(await exists(join(agenticsRepoDir, ".git")))) {
+    return;
+  }
+
+  const upstream = await runCommand(
+    "git",
+    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    agenticsRepoDir,
+    false,
+  );
+  if (upstream.exitCode !== 0) {
+    return;
+  }
+
+  await runCommand("git", ["pull", "--ff-only"], agenticsRepoDir);
+}
+
+export async function agenticsRepoOriginRemote(
+  agenticsRepoDir: string,
+): Promise<string | undefined> {
+  if (!(await exists(join(agenticsRepoDir, ".git")))) {
+    return undefined;
+  }
+
+  const result = await runCommand(
+    "git",
+    ["remote", "get-url", "origin"],
+    agenticsRepoDir,
+    false,
+  );
+  if (result.exitCode !== 0 || result.stdout.trim() === "") {
+    return undefined;
+  }
+
+  return result.stdout.trim();
+}
+
+export async function inspectionAgenticsRepoDir(
+  agenticsRepo: string,
+  options: AgenticsRepoSessionOptions = {},
+): Promise<string> {
+  const cwd = options.cwd ?? process.cwd();
+  const env = options.env ?? process.env;
+  const configured = resolveConfiguredAgenticsRepoPath(agenticsRepo, cwd);
+  if ((await exists(configured)) && !(await isBareAgenticsRepo(configured))) {
+    return configured;
+  }
+
+  return managedAgenticsRepoPath(env);
+}
+
+export function assertAgenticsRepoPathSupported(
+  agenticsRepo: string,
+  options: AgenticsRepoSessionOptions = {},
+): void {
+  const cwd = options.cwd ?? process.cwd();
+  const env = options.env ?? process.env;
+  const configured = resolveConfiguredAgenticsRepoPath(agenticsRepo, cwd);
+  assertNotDeprecatedAgenticsRepoPath(configured, env);
+}
+
+export function resolveConfiguredAgenticsRepoPath(
+  path: string,
+  cwd: string,
+): string {
+  return isAbsolute(path) ? path : resolve(cwd, path);
+}
+
+export function looksLikeAgenticsRepoRemote(value: string): boolean {
+  return (
+    /^[a-z][a-z0-9+.-]*:\/\//i.test(value) ||
+    /^[^@\s]+@[^:\s]+:.+/.test(value)
+  );
+}
+
+export async function isBareAgenticsRepo(path: string): Promise<boolean> {
+  if (!(await exists(path))) {
+    return false;
+  }
+
+  const result = await runCommand(
+    "git",
+    ["rev-parse", "--is-bare-repository"],
+    path,
+    false,
+  );
+  return result.exitCode === 0 && result.stdout.trim() === "true";
+}
+
 export async function configureAgenticsRepoGitUser(
   agenticsRepoDir: string,
 ): Promise<void> {
@@ -58,6 +254,107 @@ export async function ensureAgenticsRepoIgnore(
 
   const separator = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
   await writeFile(ignorePath, `${existing}${separator}${missing.join("\n")}\n`);
+}
+
+async function initializeLocalAgenticsRepo(
+  agenticsRepoDir: string,
+): Promise<void> {
+  await ensureGitRepository(agenticsRepoDir);
+  await ensureAgenticsRepoIgnore(agenticsRepoDir);
+}
+
+async function prepareExistingAgenticsRepo(
+  agenticsRepoDir: string,
+): Promise<void> {
+  if (await exists(join(agenticsRepoDir, ".git"))) {
+    await configureAgenticsRepoGitUser(agenticsRepoDir);
+  }
+
+  await ensureAgenticsRepoIgnore(agenticsRepoDir);
+}
+
+async function initializeRemoteAgenticsRepo(
+  source: string,
+  agenticsRepoDir: string,
+): Promise<void> {
+  await ensureGitRepository(agenticsRepoDir);
+  await configureOriginRemote(source, agenticsRepoDir);
+  await runCommand("git", ["fetch", "origin"], agenticsRepoDir);
+
+  const branch = await remoteDefaultBranch(agenticsRepoDir);
+  if (branch === undefined) {
+    await runCommand("git", ["checkout", "-B", "main"], agenticsRepoDir);
+    await ensureAgenticsRepoIgnore(agenticsRepoDir);
+    return;
+  }
+
+  await runCommand(
+    "git",
+    ["checkout", "-B", branch, `origin/${branch}`],
+    agenticsRepoDir,
+  );
+  await runCommand(
+    "git",
+    ["branch", "--set-upstream-to", `origin/${branch}`, branch],
+    agenticsRepoDir,
+  );
+  await ensureAgenticsRepoIgnore(agenticsRepoDir);
+}
+
+async function ensureGitRepository(agenticsRepoDir: string): Promise<void> {
+  await mkdir(agenticsRepoDir, { recursive: true });
+  if (!(await exists(join(agenticsRepoDir, ".git")))) {
+    await runCommand("git", ["init"], agenticsRepoDir);
+  }
+
+  await configureAgenticsRepoGitUser(agenticsRepoDir);
+}
+
+async function configureOriginRemote(
+  source: string,
+  agenticsRepoDir: string,
+): Promise<void> {
+  if ((await agenticsRepoOriginRemote(agenticsRepoDir)) === undefined) {
+    await runCommand("git", ["remote", "add", "origin", source], agenticsRepoDir);
+    return;
+  }
+
+  await runCommand(
+    "git",
+    ["remote", "set-url", "origin", source],
+    agenticsRepoDir,
+  );
+}
+
+async function remoteDefaultBranch(
+  agenticsRepoDir: string,
+): Promise<string | undefined> {
+  const result = await runCommand(
+    "git",
+    ["ls-remote", "--symref", "origin", "HEAD"],
+    agenticsRepoDir,
+  );
+  const match = /^ref: refs\/heads\/([^\t]+)\tHEAD$/mu.exec(result.stdout);
+  if (match === null) {
+    return undefined;
+  }
+
+  return match[1];
+}
+
+function assertNotDeprecatedAgenticsRepoPath(
+  configured: string,
+  env: NodeJS.ProcessEnv,
+): void {
+  if (resolve(configured) !== resolve(deprecatedAgenticsRepoPath(env))) {
+    return;
+  }
+
+  throw new Error(
+    `Nested agentics repo is no longer supported: ${configured}\n` +
+      `Move the repo to ${managedAgenticsRepoPath(env)} and update ` +
+      `${configPath(jawfishHome(env))}.`,
+  );
 }
 
 export async function inspectAgenticsRepo(

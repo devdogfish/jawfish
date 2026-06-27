@@ -11,7 +11,10 @@ import {
   writeJson,
   writeManifest,
 } from "./install.ts";
-import { pushAgenticsRepoChanges } from "./agentics-repo.ts";
+import {
+  pushAgenticsRepoChanges,
+  type AgenticsRepoSession,
+} from "./agentics-repo.ts";
 import { toolPaths } from "./config.ts";
 import {
   destinationSpec,
@@ -230,6 +233,32 @@ export async function importProviderSkills(
   await applySkillImport(agenticsRepoDir, catalog, provider, plan.imported, options);
   await writeCatalog(agenticsRepoDir, catalog);
   if (!(await pushAgenticsRepoChanges(agenticsRepoDir, `import skills from ${provider}`))) {
+    return 1;
+  }
+
+  console.log(`Imported ${plan.imported.length} skills from ${provider}`);
+  return 0;
+}
+
+export async function importProviderSkillsToSession(
+  session: AgenticsRepoSession,
+  provider: string,
+  options: PathOptions = {},
+): Promise<number> {
+  const catalog = await session.readCatalog();
+  const sourceRoot = globalSkillRoot(provider, options);
+  const plan = await planSkillImport(sourceRoot, catalog);
+
+  printImportSkillsPlan(provider, sourceRoot, plan);
+
+  if (plan.imported.length === 0) {
+    console.log("No importable skills found");
+    return 0;
+  }
+
+  await applySkillImport(session.dir, catalog, provider, plan.imported, options);
+  await session.writeCatalog(catalog);
+  if (!(await session.pushChanges(`import skills from ${provider}`))) {
     return 1;
   }
 
