@@ -59,10 +59,10 @@ import {
   type InstallScope,
 } from "./tool-adapters.ts";
 import {
-  applySkillImport,
-  type DiscoveredSkill,
+  createMigrationImportTransaction,
   globalSkillRoot,
-  planSkillImport,
+  type ImportableSkillCandidate,
+  previewImportSkillsPlan,
   printImportSkillsPlan,
 } from "./provider-skill-import.ts";
 import {
@@ -327,9 +327,13 @@ async function importSkillsCommand(args: CommandArgs): Promise<number> {
 
   const config = await loadConfig({ promptForMissingDefaultTool: false });
   const session = await openAgenticsRepoSession(config);
-  const catalog = await session.readCatalog();
+  const transaction = await createMigrationImportTransaction(
+    session,
+    [provider],
+    ["global"],
+  );
   const sourceRoot = globalSkillRoot(provider);
-  const plan = await planSkillImport(sourceRoot, catalog);
+  const plan = previewImportSkillsPlan(transaction.preview);
 
   printImportSkillsPlan(provider, sourceRoot, plan);
 
@@ -339,21 +343,23 @@ async function importSkillsCommand(args: CommandArgs): Promise<number> {
   }
 
   const selected = args.yes
-    ? plan.imported
-    : await selectProviderSkillsForImport(plan.imported);
+    ? transaction.preview.candidates
+    : await selectProviderSkillsForImport(transaction.preview.candidates);
 
   if (selected.length === 0) {
     console.log("No skills selected for import");
     return 0;
   }
 
-  await applySkillImport(session.dir, catalog, provider, selected);
-  await session.writeCatalog(catalog);
-  if (!(await session.pushChanges(`import skills from ${provider}`))) {
+  const result = await transaction.applySelected(
+    selected.map((skill) => skill.id),
+    `import skills from ${provider}`,
+  );
+  if (!result.pushed) {
     return 1;
   }
 
-  console.log(`Imported ${selected.length} skills from ${provider}`);
+  console.log(`Imported ${result.imported.length} skills from ${provider}`);
   return 0;
 }
 
@@ -907,8 +913,8 @@ function isSameUpstream(existing: string | undefined, source: string): boolean {
 }
 
 async function selectProviderSkillsForImport(
-  skills: DiscoveredSkill[],
-): Promise<DiscoveredSkill[]> {
+  skills: ImportableSkillCandidate[],
+): Promise<ImportableSkillCandidate[]> {
   const selected = await multiselect({
     message: "Import existing skills",
     options: skills.map((skill) => ({

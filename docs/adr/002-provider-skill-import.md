@@ -39,6 +39,14 @@ MVP choices:
 - On catalog name conflicts, skip by default and show the existing catalog
   entry. Rename/overwrite can be added later.
 
+Scope clarification:
+
+- The top-level `jawfish import-skills <provider>` command scans global provider
+  directories only.
+- Interactive `jawfish init` can discover both global and current-project source
+  provider skills because init is already setting up machine and project state;
+  selected imports are recorded into the matching manifest scope.
+
 ## Expected Flow
 
 1. Resolve config and agentics repo.
