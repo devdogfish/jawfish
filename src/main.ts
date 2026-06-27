@@ -1,5 +1,5 @@
 #!/usr/bin/env -S node --experimental-strip-types
-import { cancel, confirm, isCancel, multiselect, select } from "@clack/prompts";
+import { cancel, isCancel, multiselect, select } from "@clack/prompts";
 import {
   cp,
   mkdir,
@@ -68,6 +68,7 @@ import {
 } from "./tool-adapters.ts";
 import {
   applySkillImport,
+  type DiscoveredSkill,
   globalSkillRoot,
   planSkillImport,
   printImportSkillsPlan,
@@ -522,18 +523,22 @@ async function importSkillsCommand(args: ParsedArgs): Promise<number> {
     return 0;
   }
 
-  if (!args.yes && !(await confirmImportSkills(plan.imported.length))) {
-    console.log("Import cancelled");
+  const selected = args.yes
+    ? plan.imported
+    : await selectProviderSkillsForImport(plan.imported);
+
+  if (selected.length === 0) {
+    console.log("No skills selected for import");
     return 0;
   }
 
-  await applySkillImport(agenticsRepoDir, catalog, provider, plan.imported);
+  await applySkillImport(agenticsRepoDir, catalog, provider, selected);
   await writeCatalog(agenticsRepoDir, catalog);
   if (!(await pushAgenticsRepoChanges(agenticsRepoDir, `import skills from ${provider}`))) {
     return 1;
   }
 
-  console.log(`Imported ${plan.imported.length} skills from ${provider}`);
+  console.log(`Imported ${selected.length} skills from ${provider}`);
   return 0;
 }
 
@@ -1097,18 +1102,26 @@ function isSameUpstream(existing: string | undefined, source: string): boolean {
   return existing === source;
 }
 
-async function confirmImportSkills(count: number): Promise<boolean> {
-  const selected = await confirm({
-    message: `Import ${count} skills?`,
-    initialValue: true,
+async function selectProviderSkillsForImport(
+  skills: DiscoveredSkill[],
+): Promise<DiscoveredSkill[]> {
+  const selected = await multiselect({
+    message: "Import existing skills",
+    options: skills.map((skill) => ({
+      hint: skill.path,
+      label: skill.name,
+      value: skill.name,
+    })),
+    required: false,
   });
 
   if (isCancel(selected)) {
     cancel("Import cancelled");
-    return false;
+    throw new Error("Import cancelled");
   }
 
-  return selected;
+  const selectedNames = new Set(selected);
+  return skills.filter((skill) => selectedNames.has(skill.name));
 }
 
 async function acquireSource(source: string): Promise<AcquiredSource> {

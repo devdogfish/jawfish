@@ -96,8 +96,8 @@ Project installs are tracked in `jawfish.json`. Global installs are tracked in
 | `jawfish --version`                | Print jawfish version                |
 | `jawfish -v`                       | Same as `jawfish --version`          |
 
-`import-skills` previews found skills and conflicts, then asks before writing.
-Add `-y` or `--yes` to import without the prompt.
+`import-skills` previews found skills and conflicts, then lets you choose which
+skills to import. Add `-y` or `--yes` to import all without the prompt.
 
 `list` shows project/global install status. It accepts
 `--type skill|agent|prompt`, `--installed project|global|both|none|any`,

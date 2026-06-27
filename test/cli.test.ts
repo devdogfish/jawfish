@@ -597,6 +597,51 @@ describe("jawfish CLI", () => {
     );
   });
 
+  test("imports only selected provider skills interactively", async () => {
+    const context = await setup();
+    const agenticsRepoDir = join(context.rootDir, "agentics");
+    const codexHome = join(context.rootDir, "codex-home");
+
+    await createGitRepository(agenticsRepoDir);
+    await writeJawfishConfig(context, agenticsRepoDir);
+    await mkdir(join(codexHome, "skills", "focus"), { recursive: true });
+    await mkdir(join(codexHome, "skills", "plan"), { recursive: true });
+    await writeFile(join(codexHome, "skills", "focus", "SKILL.md"), "# Focus\n");
+    await writeFile(join(codexHome, "skills", "plan", "SKILL.md"), "# Plan\n");
+
+    const result = await runJawfish(
+      context,
+      ["import-skills", "codex"],
+      {
+        env: { CODEX_HOME: codexHome },
+        input: " \r",
+      },
+    );
+
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.match(result.stdout, /Import existing skills/);
+    assert.match(result.stdout, /Imported 1 skills from codex/);
+    assert.equal(
+      await readFile(join(agenticsRepoDir, "skills", "focus", "SKILL.md"), "utf8"),
+      "# Focus\n",
+    );
+    await assertMissingFile(join(agenticsRepoDir, "skills", "plan", "SKILL.md"));
+    assert.deepEqual(
+      JSON.parse(await readFile(join(agenticsRepoDir, "index.json"), "utf8")),
+      {
+        focus: {
+          description: "",
+          path: "skills/focus",
+          type: "skill",
+        },
+      },
+    );
+    assert.deepEqual(
+      JSON.parse(await readFile(join(context.homeDir, "jawfish.json"), "utf8")),
+      { jawfish: { focus: { tool: "codex" } } },
+    );
+  });
+
   test("imports provider skills with inferred git upstream", async () => {
     const context = await setup();
     const agenticsRepoDir = join(context.rootDir, "agentics");

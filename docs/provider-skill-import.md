@@ -15,8 +15,8 @@ Scope:
 - Source: global provider skill dirs only.
 - Providers: all supported tools.
 - Type: skills only.
-- Default: preview, then confirmation prompt.
-- Writes: require prompt confirmation or `-y`/`--yes`.
+- Default: preview, then skill selection prompt.
+- Writes: require skill selection or `-y`/`--yes`.
 - Target: agentics repo plus global `jawfish.json`.
 - Adoption: imported global files become Jawfish-managed.
 - Conflicts: skip existing catalog names and report them.
@@ -27,7 +27,7 @@ Scope:
 does not move the user from one provider to another or promise full provider
 conversion.
 
-Preview plus confirmation is better because global provider dirs may contain
+Preview plus selection is better because global provider dirs may contain
 personal, stale, or experimental skills. Bulk writes should be explicit, and
 `-y`/`--yes` gives scripts a fast path.
 
@@ -37,5 +37,4 @@ personal, stale, or experimental skills. Bulk writes should be explicit, and
 - Agents and prompts.
 - Rename or overwrite conflict modes.
 - `--from` and `--to` rematerialization between providers.
-- Interactive selection.
 - JSON preview output for scripting.
