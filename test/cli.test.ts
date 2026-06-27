@@ -36,6 +36,7 @@ import {
   destinationPath,
   sourceProviderSkillRoot,
   type InstallScope,
+  type ToolPaths,
 } from "../src/tool-adapters.ts";
 
 const contexts: CliTestContext[] = [];
@@ -274,10 +275,10 @@ function installedFocusSkillPath(
   scope: InstallScope,
   codexHome: string,
 ): string {
-  return join(
-    destinationPath("focus", "skill", scope, tool, testToolPaths(context, codexHome)),
-    "SKILL.md",
-  );
+  const paths = testToolPaths(context, codexHome);
+  const skillDir = destinationPath("focus", "skill", scope, tool, paths);
+
+  return join(skillDir, "SKILL.md");
 }
 
 function providerSkillRoot(
@@ -286,17 +287,15 @@ function providerSkillRoot(
   scope: InstallScope,
   codexHome: string,
 ): string {
-  return sourceProviderSkillRoot(
-    tool,
-    scope,
-    testToolPaths(context, codexHome),
-  );
+  const paths = testToolPaths(context, codexHome);
+
+  return sourceProviderSkillRoot(tool, scope, paths);
 }
 
 function testToolPaths(
   context: CliTestContext,
   codexHome: string,
-) {
+): ToolPaths {
   return toolPaths(
     {
       CODEX_HOME: codexHome,

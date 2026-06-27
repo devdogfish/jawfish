@@ -25,88 +25,61 @@ export type DestinationSpec =
   | { kind: "directory"; path: string }
   | { extension: ".md"; kind: "file"; path: string };
 
+type DirectoryDestinationSpec = Extract<DestinationSpec, { kind: "directory" }>;
+type MarkdownFileDestinationSpec = Extract<DestinationSpec, { kind: "file" }>;
+type ProviderRoot = (scope: InstallScope, paths: ToolPaths) => string;
+type DestinationResolver = (
+  name: string,
+  type: AgenticType,
+  scope: InstallScope,
+  paths: ToolPaths,
+) => DestinationSpec;
+
 interface ToolAdapter {
-  root: (scope: InstallScope, paths: ToolPaths) => string;
-  destination: (
-    name: string,
-    type: AgenticType,
-    scope: InstallScope,
-    paths: ToolPaths,
-  ) => DestinationSpec;
+  providerRoot: ProviderRoot;
+  destination: DestinationResolver;
 }
 
 const adapters = {
-  codex: {
-    root: codexRoot,
-    destination: directoryDestination(codexRoot),
-  },
-  "claude-code": {
-    root: claudeCodeRoot,
-    destination: directoryDestination(claudeCodeRoot),
-  },
-  hermes: {
-    root: hermesRoot,
-    destination: directoryDestination(hermesRoot),
-  },
+  codex: directoryAdapter(codexRoot),
+  "claude-code": directoryAdapter(claudeCodeRoot),
+  hermes: directoryAdapter(hermesRoot),
   openclaw: {
-    root: openclawRoot,
+    providerRoot: openclawRoot,
     destination: (name, type, scope, paths) => {
       if (type !== "skill") {
         throw new Error("OpenClaw supports only skill packages");
       }
 
-      return {
-        kind: "directory",
-        path: join(openclawRoot(scope, paths), "skills", name),
-      };
+      const root = openclawRoot(scope, paths);
+      return directorySpec(join(skillRoot(root), name));
     },
   },
   opencode: {
-    root: opencodeRoot,
+    providerRoot: opencodeRoot,
     destination: (name, type, scope, paths) => {
       const root = opencodeRoot(scope, paths);
       switch (type) {
         case "agent":
-          return {
-            extension: ".md",
-            kind: "file",
-            path: join(root, "agents", `${name}.md`),
-          };
+          return markdownFileSpec(join(root, "agents", `${name}.md`));
         case "prompt":
-          return {
-            extension: ".md",
-            kind: "file",
-            path: join(root, "commands", `${name}.md`),
-          };
+          return markdownFileSpec(join(root, "commands", `${name}.md`));
         case "skill":
-          return {
-            kind: "directory",
-            path: join(root, "skills", name),
-          };
+          return directorySpec(join(skillRoot(root), name));
       }
     },
   },
   pi: {
-    root: piRoot,
+    providerRoot: piRoot,
     destination: (name, type, scope, paths) => {
       const root = piRoot(scope, paths);
       switch (type) {
         case "agent":
-          return {
-            kind: "directory",
-            path: join(root, "extensions", name),
-          };
+          return directorySpec(join(root, "extensions", name));
         case "prompt":
-          return {
-            extension: ".md",
-            kind: "file",
-            path: join(root, "prompts", `${name}.md`),
-          };
+          return markdownFileSpec(join(root, "prompts", `${name}.md`));
         case "skill":
-          return {
-            kind: "directory",
-            path: join(root, "skills", name),
-          };
+          return directorySpec(join(skillRoot(root), name));
       }
     },
   },
@@ -154,7 +127,7 @@ export function sourceProviderSkillRoot(
   paths: ToolPaths,
 ): string {
   assertSupportedTool(tool);
-  return join(adapters[tool].root(scope, paths), typeFolder("skill"));
+  return skillRoot(adapters[tool].providerRoot(scope, paths));
 }
 
 export function typeFolder(type: AgenticType): string {
@@ -172,13 +145,28 @@ function scopeRoot(scope: InstallScope, paths: ToolPaths): string {
   return scope === "project" ? paths.projectDir : paths.homeDir;
 }
 
-function directoryDestination(
-  root: (scope: InstallScope, paths: ToolPaths) => string,
-): ToolAdapter["destination"] {
-  return (name, type, scope, paths) => ({
-    kind: "directory",
-    path: join(root(scope, paths), typeFolder(type), name),
-  });
+function directoryAdapter(providerRoot: ProviderRoot): ToolAdapter {
+  return {
+    providerRoot,
+    destination: directoryDestination(providerRoot),
+  };
+}
+
+function directoryDestination(providerRoot: ProviderRoot): DestinationResolver {
+  return (name, type, scope, paths) =>
+    directorySpec(join(providerRoot(scope, paths), typeFolder(type), name));
+}
+
+function directorySpec(path: string): DirectoryDestinationSpec {
+  return { kind: "directory", path };
+}
+
+function markdownFileSpec(path: string): MarkdownFileDestinationSpec {
+  return { extension: ".md", kind: "file", path };
+}
+
+function skillRoot(providerRoot: string): string {
+  return join(providerRoot, typeFolder("skill"));
 }
 
 function codexRoot(scope: InstallScope, paths: ToolPaths): string {

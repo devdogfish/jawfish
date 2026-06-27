@@ -6,7 +6,9 @@ import {
   sourceProviderSkillRoot,
   supportedTools,
   type AgenticType,
+  type DestinationSpec,
   type InstallScope,
+  type SupportedTool,
   type ToolPaths,
 } from "../src/tool-adapters.ts";
 
@@ -18,19 +20,19 @@ const paths: ToolPaths = {
   piAgentDir: join(root, "pi-agent"),
   projectDir: join(root, "project"),
 };
-const types = ["skill", "agent", "prompt"] as const;
-const scopes = ["project", "global"] as const;
+const agenticTypes = ["skill", "agent", "prompt"] as const;
+const installScopes = ["project", "global"] as const;
 
 test("calculates supported tool destinations and source skill roots", () => {
   for (const tool of supportedTools) {
-    for (const scope of scopes) {
+    for (const scope of installScopes) {
       assert.equal(
         sourceProviderSkillRoot(tool, scope, paths),
         expectedSkillRoot(tool, scope),
         `${tool} ${scope} source root`,
       );
 
-      for (const type of types) {
+      for (const type of agenticTypes) {
         if (tool === "openclaw" && type !== "skill") {
           assert.throws(
             () => destinationSpec("focus", type, scope, tool, paths),
@@ -51,42 +53,42 @@ test("calculates supported tool destinations and source skill roots", () => {
 });
 
 function expectedDestination(
-  tool: (typeof supportedTools)[number],
+  tool: SupportedTool,
   scope: InstallScope,
   type: AgenticType,
-) {
+): DestinationSpec {
   const root = expectedToolRoot(tool, scope);
   switch (tool) {
     case "opencode":
       if (type === "agent") {
-        return { extension: ".md", kind: "file", path: join(root, "agents", "focus.md") };
+        return expectedMarkdownFile(join(root, "agents", "focus.md"));
       }
       if (type === "prompt") {
-        return { extension: ".md", kind: "file", path: join(root, "commands", "focus.md") };
+        return expectedMarkdownFile(join(root, "commands", "focus.md"));
       }
-      return { kind: "directory", path: join(root, "skills", "focus") };
+      return expectedDirectory(join(root, "skills", "focus"));
     case "pi":
       if (type === "agent") {
-        return { kind: "directory", path: join(root, "extensions", "focus") };
+        return expectedDirectory(join(root, "extensions", "focus"));
       }
       if (type === "prompt") {
-        return { extension: ".md", kind: "file", path: join(root, "prompts", "focus.md") };
+        return expectedMarkdownFile(join(root, "prompts", "focus.md"));
       }
-      return { kind: "directory", path: join(root, "skills", "focus") };
+      return expectedDirectory(join(root, "skills", "focus"));
     default:
-      return { kind: "directory", path: join(root, typeFolder(type), "focus") };
+      return expectedDirectory(join(root, typeFolder(type), "focus"));
   }
 }
 
 function expectedSkillRoot(
-  tool: (typeof supportedTools)[number],
+  tool: SupportedTool,
   scope: InstallScope,
 ): string {
   return join(expectedToolRoot(tool, scope), "skills");
 }
 
 function expectedToolRoot(
-  tool: (typeof supportedTools)[number],
+  tool: SupportedTool,
   scope: InstallScope,
 ): string {
   const scopeRoot = scope === "project" ? paths.projectDir : paths.homeDir;
@@ -106,6 +108,14 @@ function expectedToolRoot(
     case "pi":
       return scope === "project" ? join(paths.projectDir, ".pi") : paths.piAgentDir;
   }
+}
+
+function expectedDirectory(path: string): DestinationSpec {
+  return { kind: "directory", path };
+}
+
+function expectedMarkdownFile(path: string): DestinationSpec {
+  return { extension: ".md", kind: "file", path };
 }
 
 function typeFolder(type: AgenticType): string {
