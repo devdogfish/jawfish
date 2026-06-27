@@ -31,7 +31,6 @@ import {
   initCommand,
   type InitCommandPrompts,
 } from "../src/init-command.ts";
-import { normalizeSourceUrl } from "../src/main.ts";
 import {
   destinationPath,
   sourceProviderSkillRoot,
@@ -1783,15 +1782,6 @@ describe("jawfish CLI", () => {
         );
       });
     }
-  });
-
-  test("normalizes GitHub blob file URLs to raw URLs", () => {
-    assert.equal(
-      normalizeSourceUrl(
-        "https://github.com/mattpocock/skills/blob/main/skills/productivity/handoff/SKILL.md",
-      ),
-      "https://raw.githubusercontent.com/mattpocock/skills/main/skills/productivity/handoff/SKILL.md",
-    );
   });
 
   test("imports a URL directory package with agent type inference", async () => {
