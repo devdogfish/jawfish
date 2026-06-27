@@ -52,12 +52,14 @@ interface PathOptions {
   env?: NodeJS.ProcessEnv;
 }
 
+type NativeDestination = Extract<DestinationSpec, { kind: "file" }>;
+
 export async function materializeSource(
   sourcePath: string,
   target: MaterializationTarget,
   options: PathOptions = {},
 ): Promise<void> {
-  const destination = materializationDestination(target, options);
+  const destination = destinationForTarget(target, options);
   const sourceFiles = await packageFiles(sourcePath);
 
   if (destination.kind === "file") {
@@ -84,7 +86,7 @@ export async function assertCanMaterializeSource(
   target: MaterializationTarget,
   options: PathOptions = {},
 ): Promise<void> {
-  const destination = materializationDestination(target, options);
+  const destination = destinationForTarget(target, options);
   const sourceFiles = await packageFiles(sourcePath);
 
   if (destination.kind === "file") {
@@ -104,21 +106,15 @@ export async function adoptMaterializedPackage(
   target: MaterializationTarget,
   options: PathOptions = {},
 ): Promise<void> {
-  const destination = materializationDestination(target, options);
+  const destination = destinationForTarget(target, options);
 
   if (destination.kind === "file") {
-    if (!(await exists(destination.path))) {
-      throw new Error(`Cannot adopt missing destination file: ${destination.path}`);
-    }
-
+    await assertAdoptableDestinationExists(destination.path, "destination file");
     await writeNativeMarker(destination.path, target);
     return;
   }
 
-  if (!(await exists(destination.path))) {
-    throw new Error(`Cannot adopt missing destination: ${destination.path}`);
-  }
-
+  await assertAdoptableDestinationExists(destination.path, "destination");
   await writeManagedMarker(
     destination.path,
     await installedPackageFiles(destination.path),
@@ -130,7 +126,7 @@ export async function removeMaterializedPackage(
   target: MaterializationTarget,
   options: PathOptions = {},
 ): Promise<void> {
-  const destination = materializationDestination(target, options);
+  const destination = destinationForTarget(target, options);
   if (destination.kind === "file") {
     await removeManagedNativeFile(destination.path);
     return;
@@ -146,11 +142,7 @@ export async function stripMaterializationMetadata(path: string): Promise<void> 
 
   const pathStat = await stat(path);
   if (pathStat.isDirectory()) {
-    await rm(join(path, managedMarkerFile), { force: true });
-    await rm(join(path, nativeMarkerDirectory), {
-      force: true,
-      recursive: true,
-    });
+    await stripDirectoryMaterializationMetadata(path);
     return;
   }
 
@@ -167,7 +159,7 @@ export function resolveInside(root: string, path: string): string {
   return resolved;
 }
 
-function materializationDestination(
+function destinationForTarget(
   target: MaterializationTarget,
   options: PathOptions,
 ): DestinationSpec {
@@ -181,7 +173,7 @@ function materializationDestination(
 }
 
 async function copyNativeFile(
-  destination: Extract<DestinationSpec, { kind: "file" }>,
+  destination: NativeDestination,
   sourceFiles: PackageFile[],
   target: MaterializationTarget,
 ): Promise<void> {
@@ -192,7 +184,7 @@ async function copyNativeFile(
 }
 
 async function assertCanCopyNativeFile(
-  destination: Extract<DestinationSpec, { kind: "file" }>,
+  destination: NativeDestination,
   sourceFiles: PackageFile[],
 ): Promise<PackageFile> {
   if (sourceFiles.length !== 1) {
@@ -219,13 +211,24 @@ async function assertCanCopyNativeFile(
   return sourceFile;
 }
 
-async function assertNoUnmanagedNativeConflict(path: string): Promise<void> {
-  if ((await exists(path)) && !(await exists(nativeMarkerPath(path)))) {
-    throw new Error(
-      `Refusing to overwrite unmanaged destination file: ${path}\n` +
-        "Remove it or move it aside, then retry.",
-    );
+async function assertAdoptableDestinationExists(
+  path: string,
+  label: string,
+): Promise<void> {
+  if (!(await exists(path))) {
+    throw new Error(`Cannot adopt missing ${label}: ${path}`);
   }
+}
+
+async function assertNoUnmanagedNativeConflict(path: string): Promise<void> {
+  if (!(await exists(path)) || (await exists(nativeMarkerPath(path)))) {
+    return;
+  }
+
+  throw new Error(
+    `Refusing to overwrite unmanaged destination file: ${path}\n` +
+      "Remove it or move it aside, then retry.",
+  );
 }
 
 async function assertNoUnmanagedConflicts(
@@ -235,15 +238,17 @@ async function assertNoUnmanagedConflicts(
 ): Promise<void> {
   for (const sourceFile of sourceFiles) {
     const installedPath = join(destination, sourceFile.relativePath);
-    if (
-      (await exists(installedPath)) &&
-      !managedFiles.has(sourceFile.relativePath)
-    ) {
-      throw new Error(
-        `Refusing to overwrite unmanaged destination file: ${installedPath}\n` +
-          "Remove it or move it aside, then retry.",
-      );
+    if (!(await exists(installedPath))) {
+      continue;
     }
+    if (managedFiles.has(sourceFile.relativePath)) {
+      continue;
+    }
+
+    throw new Error(
+      `Refusing to overwrite unmanaged destination file: ${installedPath}\n` +
+        "Remove it or move it aside, then retry.",
+    );
   }
 }
 
@@ -254,7 +259,7 @@ async function canAdoptUnmanagedDestination(
   if (!(await exists(destination))) {
     return false;
   }
-  if (await exists(join(destination, managedMarkerFile))) {
+  if (await exists(managedMarkerPath(destination))) {
     return false;
   }
 
@@ -265,10 +270,10 @@ async function canAdoptUnmanagedNativeFile(
   destination: string,
   sourcePath: string,
 ): Promise<boolean> {
-  if (
-    !(await exists(destination)) ||
-    (await exists(nativeMarkerPath(destination)))
-  ) {
+  if (!(await exists(destination))) {
+    return false;
+  }
+  if (await exists(nativeMarkerPath(destination))) {
     return false;
   }
 
@@ -281,10 +286,10 @@ async function directoryContainsMatchingPackage(
 ): Promise<boolean> {
   for (const sourceFile of sourceFiles) {
     const installedPath = join(destination, sourceFile.relativePath);
-    if (
-      !(await exists(installedPath)) ||
-      !(await filesMatch(sourceFile.path, installedPath))
-    ) {
+    if (!(await exists(installedPath))) {
+      return false;
+    }
+    if (!(await filesMatch(sourceFile.path, installedPath))) {
       return false;
     }
   }
@@ -301,24 +306,23 @@ async function writeManagedMarker(
   sourceFiles: PackageFile[],
   target: MaterializationTarget,
 ): Promise<void> {
-  await writeJson(join(destination, managedMarkerFile), {
-    files: sourceFiles.map((file) => file.relativePath).sort(),
-    name: target.name,
-    tool: target.tool,
-    type: target.type,
-  });
+  await writeJson(
+    managedMarkerPath(destination),
+    managedMarkerContents(
+      sourceFiles.map((file) => file.relativePath),
+      target,
+    ),
+  );
 }
 
 async function writeNativeMarker(
   destination: string,
   target: MaterializationTarget,
 ): Promise<void> {
-  await writeJson(nativeMarkerPath(destination), {
-    files: [basename(destination)],
-    name: target.name,
-    tool: target.tool,
-    type: target.type,
-  });
+  await writeJson(
+    nativeMarkerPath(destination),
+    managedMarkerContents([basename(destination)], target),
+  );
 }
 
 async function removeStaleManagedFiles(
@@ -328,11 +332,13 @@ async function removeStaleManagedFiles(
 ): Promise<void> {
   const sourceFileNames = new Set(sourceFiles.map((file) => file.relativePath));
   for (const managedFile of managedFiles) {
-    if (!sourceFileNames.has(managedFile)) {
-      const installedPath = join(destination, managedFile);
-      await rm(installedPath, { force: true });
-      await removeEmptyParents(dirname(installedPath), destination);
+    if (sourceFileNames.has(managedFile)) {
+      continue;
     }
+
+    const installedPath = join(destination, managedFile);
+    await rm(installedPath, { force: true });
+    await removeEmptyParents(dirname(installedPath), destination);
   }
 }
 
@@ -352,7 +358,7 @@ async function managedFileSet(destination: string): Promise<Set<string>> {
     return new Set();
   }
 
-  const markerPath = join(destination, managedMarkerFile);
+  const markerPath = managedMarkerPath(destination);
   if (!(await exists(markerPath))) {
     throw new Error(
       `Refusing to overwrite unmanaged destination: ${destination}\n` +
@@ -376,7 +382,7 @@ async function removeManagedDestination(destination: string): Promise<void> {
     return;
   }
 
-  const markerPath = join(destination, managedMarkerFile);
+  const markerPath = managedMarkerPath(destination);
   if (!(await exists(markerPath))) {
     return;
   }
@@ -404,6 +410,32 @@ async function removeManagedNativeFile(path: string): Promise<void> {
 
 function nativeMarkerPath(path: string): string {
   return join(dirname(path), nativeMarkerDirectory, `${basename(path)}.json`);
+}
+
+function managedMarkerPath(destination: string): string {
+  return join(destination, managedMarkerFile);
+}
+
+function managedMarkerContents(
+  files: string[],
+  target: MaterializationTarget,
+): ManagedMarker {
+  return {
+    files: [...files].sort(),
+    name: target.name,
+    tool: target.tool,
+    type: target.type,
+  };
+}
+
+async function stripDirectoryMaterializationMetadata(
+  path: string,
+): Promise<void> {
+  await rm(managedMarkerPath(path), { force: true });
+  await rm(join(path, nativeMarkerDirectory), {
+    force: true,
+    recursive: true,
+  });
 }
 
 async function packageFiles(sourcePath: string): Promise<PackageFile[]> {
@@ -441,12 +473,14 @@ async function directoryFiles(
       continue;
     }
 
-    if (entry.isFile()) {
-      files.push({
-        path,
-        relativePath: relative(root, path),
-      });
+    if (!entry.isFile()) {
+      continue;
     }
+
+    files.push({
+      path,
+      relativePath: relative(root, path),
+    });
   }
 
   return files;
