@@ -166,6 +166,23 @@ export async function discoverImportableSkills(
     }
   }
 
+  const duplicateNames = duplicateImportCandidateNames(discovery.candidates);
+  if (duplicateNames.size > 0) {
+    discovery.conflicts.push(
+      ...discovery.candidates
+        .filter((candidate) => duplicateNames.has(candidate.name))
+        .map((candidate) => ({
+          name: candidate.name,
+          provider: candidate.provider,
+          reason: "duplicate discovered skill name",
+          scope: candidate.scope,
+        })),
+    );
+    discovery.candidates = discovery.candidates.filter(
+      (candidate) => !duplicateNames.has(candidate.name),
+    );
+  }
+
   discovery.candidates.sort((left, right) =>
     left.provider.localeCompare(right.provider) ||
     left.scope.localeCompare(right.scope) ||
@@ -412,20 +429,27 @@ function skillRoot(
 }
 
 function assertUniqueImportNames(skills: ImportableSkillCandidate[]): void {
-  const counts = new Map<string, number>();
-  for (const skill of skills) {
-    counts.set(skill.name, (counts.get(skill.name) ?? 0) + 1);
-  }
-
-  const duplicates = [...counts.entries()]
-    .filter(([, count]) => count > 1)
-    .map(([name]) => name)
-    .sort();
+  const duplicates = [...duplicateImportCandidateNames(skills)].sort();
   if (duplicates.length > 0) {
     throw new Error(
       `Selected import skills contain duplicate names: ${duplicates.join(", ")}`,
     );
   }
+}
+
+function duplicateImportCandidateNames(
+  candidates: ImportableSkillCandidate[],
+): Set<string> {
+  const counts = new Map<string, number>();
+  for (const candidate of candidates) {
+    counts.set(candidate.name, (counts.get(candidate.name) ?? 0) + 1);
+  }
+
+  return new Set(
+    [...counts.entries()]
+      .filter(([, count]) => count > 1)
+      .map(([name]) => name),
+  );
 }
 
 function selectedImportCandidates(

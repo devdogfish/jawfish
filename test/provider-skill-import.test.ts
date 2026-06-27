@@ -128,6 +128,56 @@ test("migration import preview reports conflicts and skips before validating sel
   });
 });
 
+test("migration import preview treats duplicate discovered names as conflicts", async () => {
+  await withProviderImportContext(async (context) => {
+    const { agenticsRepoDir, codexHome, options } = context;
+    const projectDir = options.cwd;
+
+    await createGitRepository(agenticsRepoDir);
+    await mkdir(join(codexHome, "skills", "focus"), { recursive: true });
+    await mkdir(join(projectDir, ".codex", "skills", "focus"), {
+      recursive: true,
+    });
+    await writeFile(join(codexHome, "skills", "focus", "SKILL.md"), "# Global\n");
+    await writeFile(
+      join(projectDir, ".codex", "skills", "focus", "SKILL.md"),
+      "# Project\n",
+    );
+
+    const session = createAgenticsRepoSession(agenticsRepoDir);
+    const transaction = await createMigrationImportTransaction(
+      session,
+      ["codex"],
+      ["global", "project"],
+      options,
+    );
+
+    assert.deepEqual(transaction.preview.candidates, []);
+    assert.deepEqual(transaction.preview.conflicts, [
+      {
+        name: "focus",
+        provider: "codex",
+        reason: "duplicate discovered skill name",
+        scope: "global",
+      },
+      {
+        name: "focus",
+        provider: "codex",
+        reason: "duplicate discovered skill name",
+        scope: "project",
+      },
+    ]);
+
+    await assert.rejects(
+      transaction.applySelected(["codex:global:focus"], "import skills"),
+      /Selected import skill is not available: codex:global:focus/,
+    );
+    await assertMissingFile(
+      join(agenticsRepoDir, "skills", "focus", "SKILL.md"),
+    );
+  });
+});
+
 test("migration import transaction keeps local writes consistent when push fails", async () => {
   await withProviderImportContext(async (context) => {
     const { agenticsRepoDir, codexHome, homeDir, options, rootDir } = context;

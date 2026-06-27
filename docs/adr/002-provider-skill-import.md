@@ -38,6 +38,8 @@ MVP choices:
 - Support `-y`/`--yes` to import without prompting.
 - On catalog name conflicts, skip by default and show the existing catalog
   entry. Rename/overwrite can be added later.
+- On duplicate discovered names across scanned providers/scopes, mark each
+  duplicate as a conflict because the catalog is keyed by agentic name.
 
 Scope clarification:
 
