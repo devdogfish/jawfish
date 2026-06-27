@@ -37,20 +37,20 @@ import {
   type ImportableSkillCandidate,
 } from "./provider-skill-import.ts";
 import { assertSupportedTool } from "./tool-adapters.ts";
+import {
+  runInitWorkflow,
+  type ExistingMachineInitAction,
+  type InitAgenticsRepoUpdate,
+  type InitImportSkillsResult,
+  type InitWorkflowRuntime,
+  type MachineReinitializeAction,
+} from "./init-workflow.ts";
 
 interface InitCommandArgs {
   yes: boolean;
 }
 
 type AgenticsRepoMode = "link" | "local";
-type ExistingMachineInitAction = "project" | "reinitialize";
-type MachineReinitializeAction =
-  | "agentics"
-  | "agentics-repo"
-  | "default-tool"
-  | "done"
-  | "global-starters"
-  | "import-skills";
 
 export interface InitCommandPrompts {
   inputAgenticsRepo: () => Promise<string>;
@@ -100,37 +100,7 @@ export async function initCommand(
   options: InitCommandOptions = {},
 ): Promise<number> {
   const context = initContext(options);
-
-  const configFile = await existingConfigPath(context.env);
-  if (configFile === undefined) {
-    const config = args.yes || hasCompleteMachineSetupEnv(context)
-      ? await createMachineSetup(context)
-      : await createInteractiveMachineSetup(context);
-    console.log(`Initialized jawfish at ${configPath(jawfishHome(context.env))}`);
-    if (config.agenticsRepo !== undefined && config.agenticsRepo !== "") {
-      await printAgenticsRepoLocation(config.agenticsRepo, context);
-    }
-    if (args.yes) {
-      await printAgenticsRepoInspection(config.agenticsRepo, context);
-      return 0;
-    }
-
-    await runProjectSetup(config, context);
-    return 0;
-  }
-
-  const config = await validateMachineSetup(context);
-  if (args.yes) {
-    await ensureProjectManifest(context);
-    console.log(
-      `Initialized project at ${manifestPath("project", context.env, context.cwd)}`,
-    );
-    await printAgenticsRepoInspection(config.agenticsRepo, context);
-    return 0;
-  }
-
-  await runExistingMachineInit(config, context);
-  return 0;
+  return await runInitWorkflow(args, initWorkflowRuntime(context));
 }
 
 function hasCompleteMachineSetupEnv(context: InitContext): boolean {
@@ -145,6 +115,86 @@ function initContext(options: InitCommandOptions): InitContext {
     cwd: options.cwd ?? process.cwd(),
     env: options.env ?? process.env,
     prompts: options.prompts ?? defaultInitPrompts,
+  };
+}
+
+function initWorkflowRuntime(
+  context: InitContext,
+): InitWorkflowRuntime<JawfishConfig, AgenticsRepoInspection, Manifest> {
+  return {
+    ensureGlobalManifest: () => ensureGlobalManifest(context),
+    ensureProjectManifest: () => ensureProjectManifest(context),
+    hasCompleteMachineSetupEnv: () => hasCompleteMachineSetupEnv(context),
+    hasMachineConfig: async () =>
+      (await existingConfigPath(context.env)) !== undefined,
+    hasProjectManifest: () =>
+      exists(manifestPath("project", context.env, context.cwd)),
+    importSkills: async (config) => {
+      const session = await configuredAgenticsRepoSession(config, context);
+      return await importSelectedSkills(session, context);
+    },
+    inspectAgenticsRepo: async (config) =>
+      config.agenticsRepo === undefined || config.agenticsRepo === ""
+        ? emptyAgenticsRepoInspection()
+        : await (await configuredAgenticsRepoSession(config, context)).inspect(),
+    installGlobalStarterAgentics: async (config, inspection, selected) => {
+      await installGlobalStarterAgentics(
+        config,
+        await configuredAgenticsRepoDir(config, context),
+        inspection,
+        selected,
+        context,
+      );
+    },
+    installProjectAgentics: async (config, inspection, selected) => {
+      await installProjectAgentics(
+        config,
+        await configuredAgenticsRepoDir(config, context),
+        inspection,
+        selected,
+        context,
+      );
+    },
+    output: {
+      agenticsRepoInspection: async (inspection) => printInspection(inspection),
+      agenticsRepoLocation: async (config) =>
+        printConfiguredAgenticsRepoLocation(config, context),
+      importSkillsResult: async (result) => printImportSkillsResult(result),
+      machineConfig: async (config) => printMachineConfig(config, context),
+      machineInitialized: async () => printMachineInitialized(context),
+      noGlobalStarterAgenticsSelected: async () =>
+        console.log("No global starter agentics selected"),
+      noProjectAgenticsSelected: async () =>
+        console.log("No project agentics selected"),
+      noSelectableAgentics: async () =>
+        console.log(
+          "No registered agentics are selectable. Add or import agentics first.",
+        ),
+      projectInitialized: async () => printProjectInitialized(context),
+      updatedAgenticsRepo: async (update) => printUpdatedAgenticsRepo(update),
+      updatedDefaultTool: async (config) => printUpdatedDefaultTool(config),
+    },
+    prepareMachineSetup: (mode) =>
+      mode === "noninteractive"
+        ? prepareNoninteractiveMachineSetup(context)
+        : prepareInteractiveMachineSetup(context),
+    readGlobalManifest: () => readManifest("global", pathOptions(context)),
+    readProjectManifest: () => readManifest("project", pathOptions(context)),
+    reinitializeAgenticsRepo: (config) =>
+      reinitializeAgenticsRepo(config, context),
+    reinitializeDefaultTool: (config) =>
+      reinitializeDefaultTool(config, context),
+    saveMachineConfig: (config) => saveConfig(config, { env: context.env }),
+    selectExistingMachineInitAction: (hasProjectManifest) =>
+      selectExistingMachineInitAction(context, hasProjectManifest),
+    selectGlobalStarterAgentics: (inspection, manifest) =>
+      selectGlobalStarterAgentics(context, inspection, manifest),
+    selectMachineReinitializeAction: (config) =>
+      selectMachineReinitializeAction(config, context),
+    selectProjectAgentics: (inspection, manifest) =>
+      selectProjectAgentics(context, inspection, manifest),
+    validateMachineSetup: () => validateMachineSetup(context),
+    validateSelectedAgentics: assertSelectedAgenticsAvailable,
   };
 }
 
@@ -167,7 +217,9 @@ const defaultInitPrompts: InitCommandPrompts = {
   selectMachineReinitializeAction: promptForMachineReinitializeAction,
 };
 
-async function createMachineSetup(context: InitContext): Promise<JawfishConfig> {
+async function prepareNoninteractiveMachineSetup(
+  context: InitContext,
+): Promise<JawfishConfig> {
   const defaultTool = context.env.JAWFISH_DEFAULT_TOOL ?? firstSupportedTool();
   assertSupportedTool(defaultTool, "JAWFISH_DEFAULT_TOOL");
 
@@ -179,11 +231,10 @@ async function createMachineSetup(context: InitContext): Promise<JawfishConfig> 
 
   await prepareAgenticsRepo(selection, context);
   await ensureGlobalManifest(context);
-  await saveConfig(config, { env: context.env });
   return config;
 }
 
-async function createInteractiveMachineSetup(
+async function prepareInteractiveMachineSetup(
   context: InitContext,
 ): Promise<JawfishConfig> {
   const defaultTool = await context.prompts.selectDefaultTool(defaultSupportedTools);
@@ -198,8 +249,6 @@ async function createInteractiveMachineSetup(
   };
   await prepareAgenticsRepo(selection, context);
   await ensureGlobalManifest(context);
-  await runMachineStarterSetup(config, context);
-  await saveConfig(config, { env: context.env });
   return config;
 }
 
@@ -334,26 +383,6 @@ async function ensureManifest(path: string): Promise<void> {
   await writeJson(path, { jawfish: {} });
 }
 
-async function runExistingMachineInit(
-  config: JawfishConfig,
-  context: InitContext,
-): Promise<void> {
-  const hasProjectManifest = await exists(
-    manifestPath("project", context.env, context.cwd),
-  );
-  const action = await selectExistingMachineInitAction(
-    context,
-    hasProjectManifest,
-  );
-
-  if (action === "project") {
-    await runProjectSetup(config, context);
-    return;
-  }
-
-  await runMachineReinitialize(config, context);
-}
-
 async function selectExistingMachineInitAction(
   context: InitContext,
   hasProjectManifest: boolean,
@@ -362,39 +391,6 @@ async function selectExistingMachineInitAction(
     context.prompts.selectExistingMachineInitAction ??
     promptForExistingMachineInitAction;
   return await prompt(hasProjectManifest);
-}
-
-async function runMachineReinitialize(
-  initialConfig: JawfishConfig,
-  context: InitContext,
-): Promise<void> {
-  let config = { ...initialConfig };
-
-  await ensureGlobalManifest(context);
-  while (true) {
-    await printMachineConfig(config, context);
-    const action = await selectMachineReinitializeAction(config, context);
-
-    switch (action) {
-      case "done":
-        return;
-      case "default-tool":
-        config = await reinitializeDefaultTool(config, context);
-        break;
-      case "agentics-repo":
-        config = await reinitializeAgenticsRepo(config, context);
-        break;
-      case "agentics":
-        await runImportAndStarterEdit(config, context);
-        break;
-      case "global-starters":
-        await runImportAndStarterEdit(config, context);
-        break;
-      case "import-skills":
-        await runImportAndStarterEdit(config, context);
-        break;
-    }
-  }
 }
 
 async function selectMachineReinitializeAction(
@@ -421,6 +417,56 @@ async function printMachineConfig(
   console.log(`Config: ${configPath(jawfishHome(context.env))}`);
 }
 
+function printMachineInitialized(context: InitContext): void {
+  console.log(`Initialized jawfish at ${configPath(jawfishHome(context.env))}`);
+}
+
+async function printConfiguredAgenticsRepoLocation(
+  config: JawfishConfig,
+  context: InitContext,
+): Promise<void> {
+  if (config.agenticsRepo === undefined || config.agenticsRepo === "") {
+    return;
+  }
+
+  await printAgenticsRepoLocation(config.agenticsRepo, context);
+}
+
+function printProjectInitialized(context: InitContext): void {
+  console.log(
+    `Initialized project at ${manifestPath("project", context.env, context.cwd)}`,
+  );
+}
+
+function printImportSkillsResult(result: InitImportSkillsResult): void {
+  switch (result.kind) {
+    case "delegated":
+      return;
+    case "imported":
+      console.log(`Imported ${result.count} skills`);
+      return;
+    case "no-importable-skills":
+      console.log("No importable skills found");
+      return;
+    case "no-skills-selected":
+      console.log("No skills selected for import");
+      return;
+  }
+}
+
+function printUpdatedDefaultTool(config: JawfishConfig): void {
+  console.log(`Updated default tool: ${config.defaultTool ?? "missing"}`);
+}
+
+function printUpdatedAgenticsRepo(
+  update: InitAgenticsRepoUpdate<JawfishConfig>,
+): void {
+  console.log(`Updated agentics repo local: ${update.localPath ?? "missing"}`);
+  if (update.remoteSource !== undefined) {
+    console.log(`Updated agentics repo remote: ${update.remoteSource}`);
+  }
+}
+
 async function reinitializeDefaultTool(
   config: JawfishConfig,
   context: InitContext,
@@ -430,81 +476,30 @@ async function reinitializeDefaultTool(
 
   const nextConfig = { ...config, defaultTool };
   await saveConfig(nextConfig, { env: context.env });
-  console.log(`Updated default tool: ${defaultTool}`);
   return nextConfig;
 }
 
 async function reinitializeAgenticsRepo(
   config: JawfishConfig,
   context: InitContext,
-): Promise<JawfishConfig> {
+): Promise<InitAgenticsRepoUpdate<JawfishConfig>> {
   const repoMode = await context.prompts.selectAgenticsRepoMode();
   const selection = await resolveAgenticsRepoSelection(repoMode, context);
 
   await prepareAgenticsRepo(selection, context);
   const nextConfig = { ...config, agenticsRepo: selection.localPath };
   await saveConfig(nextConfig, { env: context.env });
-  console.log(`Updated agentics repo local: ${selection.localPath}`);
-  if (selection.remoteSource !== undefined) {
-    console.log(`Updated agentics repo remote: ${selection.remoteSource}`);
-  }
-  await printAgenticsRepoInspection(selection.localPath, context);
-  return nextConfig;
-}
-
-async function runImportAndStarterEdit(
-  config: JawfishConfig,
-  context: InitContext,
-): Promise<void> {
-  const session = await configuredAgenticsRepoSession(config, context);
-  await importSelectedSkills(session, context);
-  const inspection = await session.inspect();
-
-  printInspection(inspection);
-  if (inspection.usable.length === 0) {
-    console.log("No registered agentics are selectable. Add or import agentics first.");
-    return;
-  }
-
-  await installSelectedGlobalStarters(
-    config,
-    session.dir,
-    inspection,
-    context,
-  );
-}
-
-async function runMachineStarterSetup(
-  config: JawfishConfig,
-  context: InitContext,
-): Promise<void> {
-  const session = await configuredAgenticsRepoSession(config, context);
-  let inspection = await session.inspect();
-
-  printInspection(inspection);
-
-  const shouldImportBeforeStarterSelection = inspection.usable.length === 0;
-  if (shouldImportBeforeStarterSelection) {
-    await importSelectedSkills(session, context);
-    inspection = await session.inspect();
-    if (inspection.usable.length > 0) {
-      printInspection(inspection);
-    }
-  }
-
-  if (inspection.usable.length > 0) {
-    await installSelectedGlobalStarters(config, session.dir, inspection, context);
-  }
-
-  if (!shouldImportBeforeStarterSelection) {
-    await importSelectedSkills(session, context);
-  }
+  return {
+    config: nextConfig,
+    localPath: selection.localPath,
+    remoteSource: selection.remoteSource,
+  };
 }
 
 async function importSelectedSkills(
   session: AgenticsRepoSession,
   context: InitContext,
-): Promise<void> {
+): Promise<InitImportSkillsResult> {
   const options = pathOptions(context);
   const transaction = await createMigrationImportTransaction(
     session,
@@ -515,28 +510,26 @@ async function importSelectedSkills(
   const preview = transaction.preview;
 
   if (preview.candidates.length === 0) {
-    console.log("No importable skills found");
-    return;
+    return { kind: "no-importable-skills" };
   }
 
   if (context.prompts.selectImportSkills === undefined) {
     await importSelectedProviders(session, context);
-    return;
+    return { kind: "delegated" };
   }
 
   const selectedIds = await context.prompts.selectImportSkills(
     preview.candidates,
   );
   if (selectedIds.length === 0) {
-    console.log("No skills selected for import");
-    return;
+    return { kind: "no-skills-selected" };
   }
 
   const result = await transaction.applySelected(selectedIds, "import skills");
   if (!result.pushed) {
     throw new Error("Import failed");
   }
-  console.log(`Imported ${result.imported.length} skills`);
+  return { count: result.imported.length, kind: "imported" };
 }
 
 async function importSelectedProviders(
@@ -564,22 +557,14 @@ async function importSelectedProviders(
   }
 }
 
-async function installSelectedGlobalStarters(
+async function installGlobalStarterAgentics(
   config: JawfishConfig,
   agenticsRepoDir: string,
   inspection: AgenticsRepoInspection,
+  selected: string[],
   context: InitContext,
 ): Promise<void> {
   const options = pathOptions(context);
-  const manifest = await readManifest("global", options);
-  const selected = await selectGlobalStarterAgentics(context, inspection, manifest);
-  if (selected.length === 0) {
-    console.log("No global starter agentics selected");
-    return;
-  }
-
-  assertSelectedAgenticsAvailable(selected, inspection);
-
   const tool = configuredDefaultTool(config, context);
   const catalog = catalogFromInspection(inspection);
   for (const name of selected) {
@@ -608,40 +593,19 @@ async function selectGlobalStarterAgentics(
   return await prompt(inspection, manifest);
 }
 
-async function runProjectSetup(
+async function installProjectAgentics(
   config: JawfishConfig,
+  agenticsRepoDir: string,
+  inspection: AgenticsRepoInspection,
+  selected: string[],
   context: InitContext,
 ): Promise<void> {
-  const session = await configuredAgenticsRepoSession(config, context);
-  const inspection = await session.inspect();
   const options = pathOptions(context);
-  const manifest = await readManifest("project", options);
-
-  console.log(
-    `Initialized project at ${manifestPath("project", context.env, context.cwd)}`,
-  );
-  printInspection(inspection);
-
-  if (inspection.usable.length === 0) {
-    await ensureProjectManifest(context);
-    console.log("No registered agentics are selectable. Add or import agentics first.");
-    return;
-  }
-
-  const selected = await selectProjectAgentics(context, inspection, manifest);
-  if (selected.length === 0) {
-    await ensureProjectManifest(context);
-    console.log("No project agentics selected");
-    return;
-  }
-
-  assertSelectedAgenticsAvailable(selected, inspection);
-
   const tool = configuredDefaultTool(config, context);
   const catalog = catalogFromInspection(inspection);
   for (const name of selected) {
     await installManifestEntry(
-      session.dir,
+      agenticsRepoDir,
       catalog,
       name,
       "project",
@@ -862,22 +826,14 @@ async function configuredAgenticsRepoSession(
   );
 }
 
-async function printAgenticsRepoInspection(
-  agenticsRepo: string | undefined,
-  context: InitContext,
-): Promise<void> {
-  if (agenticsRepo === undefined || agenticsRepo === "") {
-    console.log("Agentics repo inspection");
-    console.log("Catalog: none");
-    console.log("Counts: 0 skills, 0 agents, 0 prompts");
-    console.log("Usable: none");
-    return;
-  }
-
-  const session = createAgenticsRepoSession(
-    await inspectionAgenticsRepoDir(agenticsRepo, pathOptions(context)),
-  );
-  printInspection(await session.inspect());
+function emptyAgenticsRepoInspection(): AgenticsRepoInspection {
+  return {
+    broken: [],
+    counts: { agent: 0, prompt: 0, skill: 0 },
+    skipped: [],
+    usable: [],
+    usableNames: [],
+  };
 }
 
 async function printAgenticsRepoLocation(
